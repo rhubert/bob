@@ -964,6 +964,8 @@ def doProject(argv, bobRoot):
     else:
         if not args.package or not args.projectGenerator:
             print("bob project: error: the following arguments are required: projectGenerator, package, args")
+            print(args.package)
+            print(args.projectGenerator)
             return 1
 
     try:

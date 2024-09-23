@@ -2989,6 +2989,7 @@ class RecipeSet:
                 schema.Optional('gitCommitOnBranch') : bool,
                 schema.Optional('fixImportScmVariant') : bool,
                 schema.Optional('defaultFileMode') : bool,
+                schema.Optional('scmOnlyExtracted') : bool,
             },
             error="Invalid policy specified! Are you using an appropriate version of Bob?"
         ),
@@ -3032,6 +3033,11 @@ class RecipeSet:
             "0.24rc1",
             InfoOnce("defaultFileMode policy not set. File mode of URL SCMs not set for locally copied files.",
                 help="See http://bob-build-tool.readthedocs.io/en/latest/manual/policies.html#defaultfilemode for more information.")
+        ),
+        "scmOnlyExtracted": (
+            "0.24.1.dev105",
+            InfoOnce("scmOnlyExtracted policy is not set. Downloaded original is part of the source workspace",
+                help="See http://bob-build-tool.readthedocs.io/en/latest/manual/policies.html#scmOnlyExtracted for more information.")
         ),
     }
 

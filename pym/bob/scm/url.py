@@ -223,7 +223,8 @@ class UrlScm(Scm):
     }
 
     def __init__(self, spec, overrides=[], stripUser=None,
-                 preMirrors=[], fallbackMirrors=[], defaultFileMode=None):
+                 preMirrors=[], fallbackMirrors=[], defaultFileMode=None,
+                 onlyExtracted=True):
         super().__init__(spec, overrides)
         self.__url = spec["url"]
         self.__digestSha1 = spec.get("digestSHA1")
@@ -262,6 +263,7 @@ class UrlScm(Scm):
         self.__fallbackMirrorsUrls = spec.get("fallbackMirrors")
         self.__fallbackMirrorsUpload = spec.get("__fallbackMirrorsUpload")
         self.__fileMode = spec.get("fileMode", 0o600 if defaultFileMode else None)
+        self.__onlyExtracted = spec.get("onlyExtracted", onlyExtracted)
 
     def getProperties(self, isJenkins, pretty=False):
         ret = super().getProperties(isJenkins)
@@ -282,6 +284,7 @@ class UrlScm(Scm):
             'fallbackMirrors' : self.__getFallbackMirrorsUrls(),
             '__fallbackMirrorsUpload' : self.__getFallbackMirrorsUpload(),
             'fileMode' : dumpMode(self.__fileMode) if pretty else self.__fileMode,
+            'onlyExtracted' : self.__onlyExtracted,
         })
         return ret
 
@@ -536,9 +539,14 @@ class UrlScm(Scm):
         return True
 
     async def invoke(self, invoker):
-        os.makedirs(invoker.joinPath(self.__dir), exist_ok=True)
-        workspaceFile = os.path.join(self.__dir, self.__fn)
-        destination = invoker.joinPath(self.__dir, self.__fn)
+        extractors = self.__getExtractors()
+        downloadDestination = ""
+        if extractors and self.__onlyExtracted:
+            downloadDestination = os.path.join("..", "_download", self.__dir)
+
+        os.makedirs(invoker.joinPath(self.__dir, downloadDestination), exist_ok=True)
+        destination = invoker.joinPath(self.__dir, downloadDestination, self.__fn)
+        workspaceFile = os.path.join(self.__dir, downloadDestination, self.__fn)
 
         # Download only if necessary
         if not self.isDeterministic() or not os.path.isfile(destination):
@@ -587,8 +595,7 @@ class UrlScm(Scm):
                     await self._put(invoker, workspaceFile, destination, url)
 
         # Run optional extractors
-        extractors = self.__getExtractors()
-        canary = invoker.joinPath(self.__dir, "." + self.__fn + ".extracted")
+        canary = invoker.joinPath(self.__dir, downloadDestination, "." + self.__fn + ".extracted")
         if extractors and isYounger(destination, canary):
             for cmd in extractors:
                 if shutil.which(cmd[0]) is None: continue
@@ -672,7 +679,10 @@ class UrlScm(Scm):
                 strip = [extractor[3].format(self.__strip)]
             else:
                 strip = []
-            ret.append([extractor[1]] + [a.format(self.__fn) for a in extractor[2]] + strip)
+            fileToExtract = self.__fn
+            if self.__onlyExtracted:
+                fileToExtract = os.path.join("..", "_download", self.__dir, self.__fn)
+            ret.append([extractor[1]] + [a.format(fileToExtract) for a in extractor[2]] + strip)
 
         if not ret:
             raise BuildError("Extractor does not support 'stripComponents'!")

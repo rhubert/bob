@@ -1206,6 +1206,8 @@ cd {ROOT}
                             os.rename(scmPath, atticPath)
                             BobState().setAtticDirectoryState(atticPath, scmSpec)
                             atticPaths.add(scmPath, atticPath)
+                            downloadPath = os.path.normpath(os.path.join(prettySrcPath, "..", "_download", scmDir))
+                            shutil.rmtree(downloadPath, ignore_errors=True)
                         del oldCheckoutState[scmDir]
                         BobState().setDirectoryState(prettySrcPath, oldCheckoutState)
 

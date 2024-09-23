@@ -626,3 +626,19 @@ New behavior
    passed to the ``fingerprintScript``. Other environment variables are unset
    but whitelisted variables (see :ref:`configuration-config-whitelist`) are
    still available.
+
+scmOnlyExtracted
+~~~~~~~~~~~~~~~~
+
+Introduced in: 0.25
+
+This policy controls if the downloaded file of a UrlScm is stored in the source
+workspace when extractors are available for it.
+
+Old behavior
+    Downloaded original and `.extracted` canary file are part of the source
+    workspace.
+
+New behavior
+    If a extractor is available the downloaded file and the canary are stored in
+    workspace/../_downloaded.

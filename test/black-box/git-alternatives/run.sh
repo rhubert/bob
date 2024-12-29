@@ -19,6 +19,7 @@ repo=$dir/repo.git
 init_repo() {
    mkdir "$1"
    git init "$1"
+   git -C "$1" checkout -b master
    git -C "$1" config user.email "bob@bob.bob"
    git -C "$1" config user.name test
 

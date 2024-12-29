@@ -15,6 +15,7 @@ popd
 D="$(mktemp -d)"
 pushd "$D"
 git init .
+git checkout -b master
 git config user.email "bob@bob.bob"
 git config user.name test
 echo "first" > first.txt

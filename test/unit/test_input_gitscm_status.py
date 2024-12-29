@@ -45,6 +45,8 @@ class TestGitScmStatus(TestCase):
         self.callGit('git config user.email "bob@bob.bob"', cwd=self.repodir)
         self.callGit('git config user.name test', cwd=self.repodir)
 
+        self.callGit('git checkout -b master', cwd=self.repodir)
+
         f = open(os.path.join(self.repodir, "test.txt"), "w")
         f.write("hello world")
         f.close()
@@ -169,6 +171,7 @@ class TestSubmodulesStatus(TestCase):
             # make sub-submodule
             cd subsub
             git init .
+            git checkout -b master
             git config user.email "bob@bob.bob"
             git config user.name test
             echo subsub > test.txt
@@ -179,6 +182,7 @@ class TestSubmodulesStatus(TestCase):
             # setup first submodule
             cd sub
             git init .
+            git checkout -b master
             git config user.email "bob@bob.bob"
             git config user.name test
             echo sub > test.txt
@@ -191,6 +195,7 @@ class TestSubmodulesStatus(TestCase):
             # setup second submodule
             cd sub2
             git init .
+            git checkout -b master
             git config user.email "bob@bob.bob"
             git config user.name test
             echo sub2 > test.txt
@@ -201,6 +206,7 @@ class TestSubmodulesStatus(TestCase):
             # setup main module
             cd main
             git init .
+            git checkout -b master
             git config user.email "bob@bob.bob"
             git config user.name test
             echo main > test.txt

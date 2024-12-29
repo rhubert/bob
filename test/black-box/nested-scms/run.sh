@@ -15,6 +15,7 @@ pushd "$git_dir1"
 git init .
 git config user.email "bob@bob.bob"
 git config user.name test
+git checkout -b master
 echo "commit-1" > git1.txt
 git add git1.txt
 git commit -m "initial commit"
@@ -28,6 +29,7 @@ pushd "$git_dir2"
 git init .
 git config user.email "bob@bob.bob"
 git config user.name test
+git checkout -b master
 echo "commit-1" > git2.txt
 git add git2.txt
 git commit -m "first commit"

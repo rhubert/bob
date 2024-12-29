@@ -188,6 +188,7 @@ def testGitModule(jc):
         subprocess.run(["git", "init", gitDir], check=True)
         subprocess.run(["git", "config", "user.email", "bob@test"], check=True, cwd=gitDir)
         subprocess.run(["git", "config", "user.name", "bob"], check=True, cwd=gitDir)
+        subprocess.run(["git", "checkout", "-b", "master"], check=True, cwd=gitDir)
         subprocess.run(["git", "add", "result.txt"], check=True, cwd=gitDir)
         subprocess.run(["git", "commit", "-m", "init"], check=True, cwd=gitDir)
 

@@ -17,6 +17,7 @@ pushd "$git_submod"
 git init .
 git config user.email "bob@bob.bob"
 git config user.name test
+git checkout -b master
 echo sub > sub.txt
 git add sub.txt
 git commit -m import
@@ -26,6 +27,7 @@ pushd "$git_dir1"
 git init .
 git config user.email "bob@bob.bob"
 git config user.name test
+git checkout -b master
 echo "hello world" > test.txt
 git add test.txt
 git commit -m "initial commit"
@@ -46,6 +48,7 @@ pushd "$git_dir2"
 git init .
 git config user.email "bob@bob.bob"
 git config user.name test
+git checkout -b master
 echo "hello bob" > bob.txt
 git add bob.txt
 git commit -m "first commit"

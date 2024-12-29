@@ -20,6 +20,7 @@ pushd ${gitDir}
 git init
 git config user.email "bob@bob.bob"
 git config user.name test
+git checkout -b master
 echo "git" > test.dat
 git add test.dat
 git commit -m "added test"

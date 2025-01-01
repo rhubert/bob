@@ -389,6 +389,7 @@ class DirHasher:
         os.fsencode(".git"),
         os.fsencode(".portage-cache"),
         os.fsencode(".svn"),
+        os.fsencode(".bob-download"),
     ])
     IGNORE_FILES = frozenset([
         os.fsencode("BaseDirList.txt"),

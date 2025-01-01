@@ -164,8 +164,8 @@ class Extractor():
         self.strip = strip
 
     async def _extract(self, cmds, invoker):
-        destination = invoker.joinPath(self.dir, self.file)
-        canary = invoker.joinPath(self.dir, "." + self.file + ".extracted")
+        destination = invoker.joinPath(self.dir, ".bob-download", self.file)
+        canary = invoker.joinPath(self.dir, ".bob-download", self.file + ".extracted")
         if isYounger(destination, canary):
             for cmd in cmds:
                 if shutil.which(cmd[0]) is None: continue
@@ -192,10 +192,11 @@ class TarExtractor(Extractor):
     async def extract(self, invoker):
         cmds = []
         if isWin32 and self.strip == 0:
-            cmds.append(["python", "-m", "tarfile", "-e", self.file])
+            cmds.append(["python", "-m", "tarfile", "-e",
+                    os.path.join(".bob-download", self.file)])
 
         cmd = ["tar", "-x", "--no-same-owner", "--no-same-permissions",
-                   "-f", self.file]
+                   "-f", os.path.join(".bob-download", self.file)]
         if self.strip > 0:
             cmd.append("--strip-components={}".format(self.strip))
         cmds.append(cmd)
@@ -212,9 +213,10 @@ class ZipExtractor(Extractor):
     async def extract(self, invoker):
         cmds = []
         if isWin32:
-            cmds.append(["python", "-m", "zipfile", "-e", self.file, "."])
+            cmds.append(["python", "-m", "zipfile",
+                   "-e", os.path.join(".bob-download", self.file), "."])
 
-        cmds.append(["unzip", "-o", self.file])
+        cmds.append(["unzip", "-o", os.path.join(".bob-download", self.file)])
         await super()._extract(cmds, invoker)
 
 
@@ -225,8 +227,13 @@ class GZipExtractor(Extractor):
             raise BuildError("Extractor does not support 'stripComponents'!")
 
     async def extract(self, invoker):
-        cmds = [["gunzip", "-kf", self.file]]
+        # gunzip extracts the file at the location of the input file. Copy the
+        # downloaded file to the workspace directory prio to uncompressing it
+        shutil.copyfile(invoker.joinPath(self.dir, ".bob-download", self.file),
+                        invoker.joinPath(self.dir, self.file))
+        cmds = [["gunzip", "-f", self.file]]
         await super()._extract(cmds, invoker)
+
 
 class XZExtractor(Extractor):
     def __init__(self, dir, file, strip):
@@ -235,8 +242,11 @@ class XZExtractor(Extractor):
             raise BuildError("Extractor does not support 'stripComponents'!")
 
     async def extract(self, invoker):
-        cmds = [["unxz", "-kf", self.file]]
+        shutil.copyfile(invoker.joinPath(self.dir, ".bob-download", self.file),
+                        invoker.joinPath(self.dir, self.file))
+        cmds = [["unxz", "-f", self.file]]
         await super()._extract(cmds, invoker)
+
 
 class SevenZipExtractor(Extractor):
     def __init__(self, dir, file, strip):
@@ -245,7 +255,7 @@ class SevenZipExtractor(Extractor):
             raise BuildError("Extractor does not support 'stripComponents'!")
 
     async def extract(self, invoker):
-        cmds = [["7z", "x", "-y", self.file]]
+        cmds = [["7z", "x", "-y", os.path.join(".bob-download", self.file)]]
         await super()._extract(cmds, invoker)
 
 
@@ -314,6 +324,8 @@ class UrlScm(Scm):
         "zip"  : ZipExtractor,
     }
 
+    VERSION = 1
+
     def __init__(self, spec, overrides=[], stripUser=None,
                  preMirrors=[], fallbackMirrors=[], defaultFileMode=None):
         super().__init__(spec, overrides)
@@ -354,6 +366,8 @@ class UrlScm(Scm):
         self.__fallbackMirrorsUrls = spec.get("fallbackMirrors")
         self.__fallbackMirrorsUpload = spec.get("__fallbackMirrorsUpload")
         self.__fileMode = spec.get("fileMode", 0o600 if defaultFileMode else None)
+        self.__version = { "valid"   : True if spec.get("__version") is not None else False,
+                           "version" : spec.get("__version", UrlScm.VERSION) }
 
     def getProperties(self, isJenkins, pretty=False):
         ret = super().getProperties(isJenkins)
@@ -374,6 +388,7 @@ class UrlScm(Scm):
             'fallbackMirrors' : self.__getFallbackMirrorsUrls(),
             '__fallbackMirrorsUpload' : self.__getFallbackMirrorsUpload(),
             'fileMode' : dumpMode(self.__fileMode) if pretty else self.__fileMode,
+            '__version' : self.__version,
         })
         return ret
 
@@ -423,7 +438,7 @@ class UrlScm(Scm):
         headers["User-Agent"] = "BobBuildTool/{}".format(BOB_VERSION)
         context = None if self.__sslVerify else sslNoVerifyContext()
         if os.path.isfile(destination) and (url.scheme in ["http", "https"]):
-            # Try to avoid download if possible
+            # Try) to avoid download if possible
             headers["If-Modified-Since"] = time2HTTPDate(os.stat(destination).st_mtime)
 
         tmpFileName = None
@@ -596,6 +611,9 @@ class UrlScm(Scm):
             invoker.fail("Upload not supported for URL scheme: " + url.scheme)
 
     def canSwitch(self, oldScm):
+        if not self.__version.get("valid"):
+            return False
+
         diff = self._diffSpec(oldScm)
         if "scm" in diff:
             return False
@@ -630,7 +648,12 @@ class UrlScm(Scm):
     async def invoke(self, invoker):
         os.makedirs(invoker.joinPath(self.__dir), exist_ok=True)
         workspaceFile = os.path.join(self.__dir, self.__fn)
+        extractor = self.__getExtractor()
+
         destination = invoker.joinPath(self.__dir, self.__fn)
+        if extractor is not None:
+            os.makedirs(invoker.joinPath(self.__dir, ".bob-download"), exist_ok=True)
+            destination = invoker.joinPath(self.__dir, ".bob-download", self.__fn)
 
         # Download only if necessary
         if not self.isDeterministic() or not os.path.isfile(destination):
@@ -679,7 +702,6 @@ class UrlScm(Scm):
                     await self._put(invoker, workspaceFile, destination, url)
 
         # Run optional extractors
-        extractor = self.__getExtractor()
         if extractor is not None:
             await extractor.extract(invoker)
 
@@ -688,7 +710,9 @@ class UrlScm(Scm):
 
         The format is "digest dir extract" if a SHA checksum was specified.
         Otherwise it is "url dir extract". A "s#" is appended if leading paths
-        are stripped where # is the number of stripped elements.
+        are stripped where # is the number of stripped elements. Also appended
+        is "m<fileMode>" if fileMode is set. "v<versionNumber>" tracks the urlscm
+        directory layout used.
         """
         if self.__stripUser:
             filt = removeUserFromUrl
@@ -698,7 +722,8 @@ class UrlScm(Scm):
                  self.__digestSha1 or filt(self.__url)
                ) + " " + posixpath.join(self.__dir, self.__fn) + " " + str(self.__extract) + \
                ( " s{}".format(self.__strip) if self.__strip > 0 else "" ) + \
-               ( " m{}".format(self.__fileMode) if self.__fileMode is not None else "")
+               ( " m{}".format(self.__fileMode) if self.__fileMode is not None else "") + \
+               " v{}".format(UrlScm.VERSION)
 
     def getDirectory(self):
         return self.__dir

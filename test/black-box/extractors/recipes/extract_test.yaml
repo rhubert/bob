@@ -30,7 +30,7 @@ buildScript: |
   6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b  test.dat
   EOF
   SHA256_FILE=$(pwd)/test.sha256
-  for d in $(find $1/ -mindepth 1 -type d); do
+  for d in $(find $1/ -mindepth 1 -not -name ".bob-download" -type d); do
     pushd $d
     sha256sum -c ${SHA256_FILE}
     popd

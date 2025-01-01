@@ -65,6 +65,7 @@ class UrlScmExecutor:
             'url' : self.url,
             'recipe' : "foo.yaml#0",
             '__source' : "Recipe foo",
+            '__version' : UrlScm.VERSION,
         }
         s.update(spec)
         return UrlScm(s, preMirrors=preMirrors, fallbackMirrors=fallbackMirrors,
@@ -862,7 +863,8 @@ class TestExtraction(UrlScmExecutor, TestCase):
                 with tempfile.TemporaryDirectory() as workspace:
                     scm = self.createUrlScm()
                     self.invokeScm(workspace, scm)
-                    self.assertTrue(os.path.exists(os.path.join(workspace, "test.txt." + ext)))
+                    self.assertTrue(os.path.exists(os.path.join(workspace, ".bob-download",
+                                                                "test.txt." + ext)))
                     self.assertFileMd5(os.path.join(workspace, "test.txt"),
                                        "d3b07384d113edec49eaa6238ad5ff00")
 

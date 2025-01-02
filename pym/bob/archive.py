@@ -127,6 +127,9 @@ class ArtifactUploadError(Exception):
 
 class TarHelper:
 
+    def packFilter(self, tarinfo):
+        return tarinfo
+
     def __extractPackage(self, tar, audit, content):
         if tar.pax_headers.get('bob-archive-vsn', "0") != "1":
             raise BuildError("Unsupported binary artifact")
@@ -168,7 +171,7 @@ class TarHelper:
             with tarfileOpen(name, "w", fileobj=gzf,
                              format=tarfile.PAX_FORMAT, pax_headers=pax) as tar:
                 tar.add(audit, "meta/" + os.path.basename(audit))
-                tar.add(content, arcname="content")
+                tar.add(content, arcname="content", filter=self.packFilter)
 
 
 class JenkinsArchive(TarHelper):

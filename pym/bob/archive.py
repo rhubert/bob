@@ -145,7 +145,10 @@ class TarHelper:
                     f.linkname = f.linkname[8:]
                 f.name = f.name[8:]
                 try:
-                    tar.extract(f, content)
+                    if sys.version_info < (3, 12, 0):
+                        tar.extract(f, content)
+                    else:
+                        tar.extract(f, content, filter='data')
                 except UnicodeError:
                     raise BuildError("File name encoding error while extracting '{}'".format(f.name),
                                      help="Your locale(7) probably does not (fully) support unicode.")

@@ -51,7 +51,6 @@ def auditFromData(data):
         raise ParseError("Cannot handle SCM: " + str(typ))
 
     try:
-        data = scm.SCHEMA.validate(data)
         return scm.fromData(data)
     except schema.SchemaError as e:
         from ..errors import ParseError

@@ -149,9 +149,9 @@ class Artifact:
 
     def load(self, data):
         self.__id = None
-        self.__variantId = data["variant-id"]
-        self.__buildId = data["build-id"]
-        self.__resultHash = data["result-hash"]
+        self.__variantId = bytes.fromhex(data["variant-id"])
+        self.__buildId = bytes.fromhex(data["build-id"])
+        self.__resultHash = bytes.fromhex(data["result-hash"])
 
         recipes = data.get("recipes")
         if recipes is not None:
@@ -177,13 +177,15 @@ class Artifact:
             self.__scms.append(auditFromData(i))
 
         deps = data["dependencies"]
-        self.__deps = deps.get("args", [])
-        self.__tools = deps.get("tools", {})
-        self.__sandbox = deps.get("sandbox")
+        self.__deps = [bytes.fromhex(a) for a in deps.get("args", [])]
+        for n,t in deps.get("tools", {}).items():
+            self.__tools[n] = bytes.fromhex(t)
+        if deps.get("sandbox") is not None:
+            self.__sandbox = bytes.fromhex(deps.get("sandbox"))
 
         # validate id
         self.__calculate()
-        if self.__id != data["artifact-id"]:
+        if self.__id != bytes.fromhex(data["artifact-id"]):
             raise ParseError("Corrupt Audit! Artifact-Id does not match!")
 
     def dump(self):
@@ -350,10 +352,9 @@ class Audit:
     def load(self, file, name):
         try:
             tree = json.load(io.TextIOWrapper(file, encoding='utf8'))
-            tree = Audit.SCHEMA.validate(tree)
             self.__artifact = Artifact.fromData(tree["artifact"])
             self.__references = {
-                r["artifact-id"] : Artifact.fromData(r) for r in tree["references"]
+                bytes.fromhex(r["artifact-id"]) : Artifact.fromData(r) for r in tree["references"]
             }
         except schema.SchemaError as e:
             raise ParseError(name + ": Invalid audit record: " + str(e),

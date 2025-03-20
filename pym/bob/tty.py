@@ -3,7 +3,9 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import datetime
 import sys
+import time
 
 DEFAULT = 0
 SKIPPED = 1
@@ -208,6 +210,7 @@ class SingleTUI(BaseTUI):
 class ParallelTtyUIAction(BaseTUIAction):
     def __init__(self, tui, job, slot, name, msg, ellipsis, showDetails):
         super().__init__(showDetails)
+        self.__startTime = time.time()
         self.__tui = tui
         self.__job = job
         self.__slot = slot
@@ -237,6 +240,8 @@ class ParallelTtyUIAction(BaseTUIAction):
             msg = [msg] + [
                 "[{:>4}] |{}| {}".format(self.__job, colorize(self.__name, self.err_kind), l)
                 for l in self.err_message.split("\n")]
+        now = time.time()
+        msg += " - " + str(datetime.timedelta(seconds=(now - self.__startTime)))
         self.__tui._putResult(self.__slot, msg)
         return False
 

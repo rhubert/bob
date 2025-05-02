@@ -20,7 +20,7 @@ concurrent uploads the artifact must appear atomically for unrelated readers.
 """
 
 from .audit import Audit
-from .errors import BuildError
+from .errors import BuildError, ParseError
 from .tty import stepAction, stepMessage, \
     SKIPPED, EXECUTED, WARNING, INFO, TRACE, ERROR, IMPORTANT
 from .utils import asHexStr, removePath, isWindows, getBashPath, tarfileOpen, binStat, removePrefix
@@ -84,7 +84,13 @@ class DummyArchive:
     def canDownload(self):
         return False
 
+    def canDownloadSrc(self):
+        return False
+
     def canUpload(self):
+        return False
+
+    def canUploadSrc(self, deterministic):
         return False
 
     def canCache(self):
@@ -183,13 +189,13 @@ class TarHelper:
 
             return Audit.fromByteStream(auditJson, filename)
 
-    def _pack(self, name, fileobj, audit, content):
+    def _pack(self, name, fileobj, audit, content, filter):
         pax = { 'bob-archive-vsn' : "1" }
         with gzip.open(name or fileobj, 'wb', 6) as gzf:
             with tarfileOpen(name, "w", fileobj=gzf,
                              format=tarfile.PAX_FORMAT, pax_headers=pax) as tar:
                 tar.add(audit, "meta/" + os.path.basename(audit))
-                tar.add(content, arcname="content")
+                tar.add(content, arcname="content", filter=filter)
 
 
 class JenkinsArchive(TarHelper):
@@ -213,7 +219,13 @@ class JenkinsArchive(TarHelper):
     def canDownload(self):
         return True
 
+    def canDownloadSrc(self):
+        return True
+
     def canUpload(self):
+        return True
+
+    def canUploadSrc(self, deterministic):
         return True
 
     def canCache(self):
@@ -242,17 +254,18 @@ class JenkinsArchive(TarHelper):
                     else:
                         msg, kind = await loop.run_in_executor(executor,
                             JenkinsArchive._uploadPackage, self, name, buildId,
-                            audit, content)
+                            audit, content,
+                            (BaseArchive._srcUploadFilter if step.isCheckoutStep() else None))
                         a.setResult(msg, kind)
                 except (concurrent.futures.CancelledError, concurrent.futures.process.BrokenProcessPool):
                     raise BuildError("Packing of package interrupted.")
 
-    def _uploadPackage(self, name, buildId, audit, content):
+    def _uploadPackage(self, name, buildId, audit, content, filter):
         # Set default signal handler so that KeyboardInterrupt is raised.
         # Needed to gracefully handle ctrl+c.
         signal.signal(signal.SIGINT, signal.default_int_handler)
         try:
-            self._pack(name, None, audit, content)
+            self._pack(name, None, audit, content, filter)
         except (tarfile.TarError, OSError) as e:
             raise BuildError("Cannot pack artifact: " + str(e))
         finally:
@@ -363,6 +376,10 @@ class BaseArchive(TarHelper):
         self.__wantDownloadJenkins = False
         self.__wantUploadLocal = False
         self.__wantUploadJenkins = False
+        self.__srcUpload = "src-upload" in flags
+        self.__srcDownload = "src-download" in flags
+        self.__srcUploadIndeterministic = spec.get("src-upload-indeterministic", "no")
+        self.__srcUploadFiltered = spec.get("src-upload-filtered", False)
 
     @property
     def ignoreErrors(self):
@@ -384,15 +401,34 @@ class BaseArchive(TarHelper):
         return self.__useDownload and ((self.__wantDownloadLocal and self.__useLocal) or
                                        (self.__wantDownloadJenkins and self.__useJenkins))
 
+    def canDownloadSrc(self):
+        return self.__srcDownload and ((self.__wantDownloadLocal and self.__useLocal) or
+                 (self.__wantDownloadJenkins and self.__useJenkins))
+
     def canUpload(self):
         return self.__useUpload and ((self.__wantUploadLocal and self.__useLocal) or
                                      (self.__wantUploadJenkins and self.__useJenkins))
+
+    def canUploadSrc(self, deterministic):
+        if not deterministic and self.__srcUploadIndeterministic == "fail":
+            raise BuildError(f"Refusing to upload indeterminsitic source to {self.__name}")
+        print(f"{self.__srcUpload} and (({deterministic} or {self.__srcUploadIndeterministic} == 'yes' \
+            and (({self.__wantUploadLocal}   and {self.__useLocal}) or \
+                 ({self.__wantUploadJenkins} and {self.__useJenkins}))")
+        return self.__srcUpload and ((deterministic or self.__srcUploadIndeterministic == "yes")
+            and ((self.__wantUploadLocal and self.__useLocal) or
+                 (self.__wantUploadJenkins and self.__useJenkins)))
 
     def canCache(self):
         return self.__useCache
 
     def _openDownloadFile(self, buildId, suffix):
         raise ArtifactNotFoundError()
+
+    def _srcUploadFilter(tarinfo):
+        if ".git" in tarinfo.name and tarinfo.isdir():
+            return None
+        return tarinfo
 
     def canManage(self):
         return self.__managed and self._canManage()
@@ -409,7 +445,8 @@ class BaseArchive(TarHelper):
 
     async def downloadPackage(self, step, buildId, audit, content, caches=[],
                               executor=None):
-        if not self.canDownload():
+        if not ((self.canDownload() and not step.isCheckoutStep()) or (self.canDownloadSrc()
+                and step.isCheckoutStep())):
             return False
 
         loop = asyncio.get_event_loop()
@@ -506,7 +543,10 @@ class BaseArchive(TarHelper):
         raise ArtifactUploadError("not implemented")
 
     async def uploadPackage(self, step, buildId, audit, content, executor=None):
-        if not self.canUpload():
+        print(f"upload: {step.isPackageStep()} and not {self.canUpload()} or \
+           {step.isCheckoutStep()} and not {self.canUploadSrc(step.isDeterministic())}")
+        if step.isPackageStep() and not self.canUpload() or\
+           step.isCheckoutStep() and not self.canUploadSrc(step.isDeterministic()):
             return
         if not audit:
             stepMessage(step, "UPLOAD", "skipped (no audit trail)", SKIPPED,
@@ -519,19 +559,20 @@ class BaseArchive(TarHelper):
         with stepAction(step, "UPLOAD", content, details=details) as a:
             try:
                 msg, kind = await loop.run_in_executor(executor, BaseArchive._uploadPackage,
-                    self, buildId, suffix, audit, content)
+                    self, buildId, suffix, audit, content,
+                    (BaseArchive._srcUploadFilter if step.isCheckoutStep() and self.__srcUploadFiltered else None))
                 a.setResult(msg, kind)
             except (concurrent.futures.CancelledError, concurrent.futures.process.BrokenProcessPool):
                 raise BuildError(self._namedErrorString("Upload of package interrupted."))
 
-    def _uploadPackage(self, buildId, suffix, audit, content):
+    def _uploadPackage(self, buildId, suffix, audit, content, filter):
         # Set default signal handler so that KeyboardInterrupt is raised.
         # Needed to gracefully handle ctrl+c.
         signal.signal(signal.SIGINT, signal.default_int_handler)
 
         try:
             with self._openUploadFile(buildId, suffix, False) as (name, fileobj):
-                self._pack(name, fileobj, audit, content)
+                self._pack(name, fileobj, audit, content, filter)
         except (ArtifactExistsError, HttpAlreadyExistsError):
             return (self._namedErrorString("skipped ({} exists in archive)".format(content)), SKIPPED)
         except (ArtifactUploadError, HttpUploadError, tarfile.TarError, OSError) as e:
@@ -1248,8 +1289,14 @@ class MultiArchive:
     def canDownload(self):
         return any(i.canDownload() for i in self.__archives)
 
+    def canDownloadSrc(self):
+        return any(i.canDownloadSrc() for i in self.__archives)
+
     def canUpload(self):
         return any(i.canUpload() for i in self.__archives)
+
+    def canUploadSrc(self, deterministic):
+        return any(i.canUploadSrc(deterministic) for i in self.__archives)
 
     async def uploadPackage(self, step, buildId, audit, content, executor=None):
         for i in self.__archives:

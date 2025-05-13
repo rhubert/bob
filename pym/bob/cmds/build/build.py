@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from ...archive import getArchiver, BundleArchive
+from ...archive import getArchiver
 from ...builder import LocalBuilder
 from ...errors import BuildError
 from ...input import RecipeSet
@@ -225,7 +225,7 @@ def commonBuildDevelop(parser, argv, bobRoot, develop):
     group.add_argument('--no-attic', action='store_false', default=None, dest='attic',
         help="Do not move to attic, instead fail the build.")
     parser.add_argument('--bundle', metavar='BUNDLE', default=None,
-        help="Bundle all matching packages to BUNDLE")
+        help="Bundle sources to BUNDLE")
     parser.add_argument('--bundle-exclude', action='append', default=[],
         help="Do not add matching packages to bundle.")
     parser.add_argument('--unbundle', default=False, action="store_true",
@@ -353,7 +353,6 @@ def commonBuildDevelop(parser, argv, bobRoot, develop):
             bundleSpec = {"backend" : "__bundle",
                           "path" : args.bundle,
                           "flags" : ["download" if args.unbundle else "upload"]}
-            builder.setBundler(BundleArchive(bundleSpec), args.bundle_exclude)
 
         if args.resume: builder.loadBuildState()
 
@@ -398,7 +397,6 @@ def commonBuildDevelop(parser, argv, bobRoot, develop):
             builder.saveBuildState()
             runHook(recipes, 'postBuildHook', ["success" if success else "fail"] + results)
 
-        builder.finishBundle()
     # tell the user
     if results:
         if len(results) == 1:

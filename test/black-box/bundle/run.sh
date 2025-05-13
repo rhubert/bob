@@ -57,6 +57,20 @@ EOF
   expect_exist dev/src/git/1/workspace/hello.txt
   expect_not_exist dev/src/git/1/workspace/.git
 
+  # test corrupted source archive leads to build error
+  rm dev -rf
+  pushd $archiveDir
+  ARTIFACTS=( $(/usr/bin/find . -type f) )
+  A=${ARTIFACTS[0]}
+  pushd $(dirname $A)
+  tar xvf $(basename $A)
+  echo "test" > content/foo.dat
+  tar --pax-option bob-archive-vsn=1 -zcf "$(basename $A)" meta content
+  rm content meta -rf
+  popd
+  popd
+
+  expect_fail run_bob dev root -DTAR_URL=${TAR_URL} -DTAR_SHA1=${TAR_SHA1} -DGIT_URL=${GIT_URL} -DGIT_COMMIT=${GIT_COMMIT} --download yes
 }
 
 run_src_upload_tests

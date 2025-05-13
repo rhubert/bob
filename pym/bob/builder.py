@@ -1235,11 +1235,17 @@ cd {ROOT}
 
                 wasDownloaded = False
                 if self.__archive.canDownloadSrc():
-                    auditPath = os.path.join(os.path.dirname(checkoutStep.getWorkspacePath()),
+                    audit= os.path.join(os.path.dirname(checkoutStep.getWorkspacePath()),
                                              "audit.json.gz")
                     wasDownloaded = await self.__archive.downloadPackage(checkoutStep,
-                        checkoutDigest, auditPath, prettySrcPath, executor=self.__executor)
-                    # TODO: compare hash
+                        checkoutDigest, audit, prettySrcPath, executor=self.__executor)
+
+                    if wasDownloaded:
+                        if not os.path.exists(audit):
+                            raise BuildError("Downloaded artifact misses its audit trail!")
+                        checkoutHash = hashWorkspace(checkoutStep)
+                        if Audit.fromFile(audit).getArtifact().getResultHash() != checkoutHash:
+                            raise BuildError("Corrupt downloaded artifact! Extracted content hash does not match audit trail.")
 
                 if not wasDownloaded:
                     with stepExec(checkoutStep, "CHECKOUT",

@@ -412,9 +412,6 @@ class BaseArchive(TarHelper):
     def canUploadSrc(self, deterministic):
         if not deterministic and self.__srcUploadIndeterministic == "fail":
             raise BuildError(f"Refusing to upload indeterminsitic source to {self.__name}")
-        print(f"{self.__srcUpload} and (({deterministic} or {self.__srcUploadIndeterministic} == 'yes' \
-            and (({self.__wantUploadLocal}   and {self.__useLocal}) or \
-                 ({self.__wantUploadJenkins} and {self.__useJenkins}))")
         return self.__srcUpload and ((deterministic or self.__srcUploadIndeterministic == "yes")
             and ((self.__wantUploadLocal and self.__useLocal) or
                  (self.__wantUploadJenkins and self.__useJenkins)))
@@ -543,8 +540,6 @@ class BaseArchive(TarHelper):
         raise ArtifactUploadError("not implemented")
 
     async def uploadPackage(self, step, buildId, audit, content, executor=None):
-        print(f"upload: {step.isPackageStep()} and not {self.canUpload()} or \
-           {step.isCheckoutStep()} and not {self.canUploadSrc(step.isDeterministic())}")
         if step.isPackageStep() and not self.canUpload() or\
            step.isCheckoutStep() and not self.canUploadSrc(step.isDeterministic()):
             return

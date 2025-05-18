@@ -118,6 +118,9 @@ class DummyArchive:
     def getArchiveName(self):
        return "Dummy"
 
+    def finish(self, success):
+        return True
+
 class ArtifactNotFoundError(Exception):
     pass
 
@@ -706,6 +709,8 @@ class BaseArchive(TarHelper):
     def getArchiveName(self):
        return self.__name
 
+    def finish(self, success):
+        return True
 
 class Tee:
     def __init__(self, fileName, fileObj, buildId, caches, workspace):
@@ -1335,6 +1340,9 @@ class MultiArchive:
             if ret is not None: break
         return ret
 
+    def finish(self, success):
+        for i in self.__archives:
+            i.finish(success)
 
 def getSingleArchiver(recipes, archiveSpec):
     archiveBackend = archiveSpec.get("backend", "none")

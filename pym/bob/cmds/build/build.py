@@ -331,7 +331,7 @@ def commonBuildDevelop(parser, argv, bobRoot, develop):
         bundleSpec = None
         bundleTemp = None
         if args.bundle is not None:
-            bundleTemp = TemporaryDirectory(dir=os.getcwd(),
+            bundleTemp = tempfile.TemporaryDirectory(dir=os.getcwd(),
                                             prefix=".bundle")
             bundleSpec = {"path" : args.bundle,
                           "mode" : "bundle",
@@ -340,7 +340,7 @@ def commonBuildDevelop(parser, argv, bobRoot, develop):
                           "exclude" : args.bundle_exclude,
                           "tempdir" : bundleTemp.name}
             args.always_checkout += ['.*']
-            args.clean_checkout = true
+            args.clean_checkout = True
         if args.unbundle is not None:
             bundleSpec = {"path" : args.unbundle,
                           "flags" : ["src-download"],

@@ -32,6 +32,7 @@ import concurrent.futures.process
 import fnmatch
 import gzip
 import io
+import re
 import os
 import os.path
 import pathlib
@@ -939,7 +940,7 @@ class BundleArchiveDownloader:
         return False
 
 class BundleArchive(LocalArchive):
-    def __init__(self, spec, tempdir):
+    def __init__(self, spec):
         self.__file = spec.get("path")
         self.__mode = spec.get("mode")
         self.__bundle = self.__mode == "bundle"
@@ -962,7 +963,8 @@ class BundleArchive(LocalArchive):
     def _canUploadSrc(self, step):
         if self.__exclude is not None:
             for p in self.__exclude:
-                if re.match(step.getPackage().getName(), p): return False
+                if re.match(p, step.getPackage().getName()):
+                    return False
         return self.__bundle
 
     def canUploadSrc(self, step, freshCheckout=None):

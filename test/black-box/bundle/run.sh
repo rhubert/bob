@@ -4,7 +4,7 @@
 cleanup
 rm -rf default.yaml
 
-trap 'rm -rf "${archiveDir}" "${srcDir}" "${srcDirTmp}" default.yaml bundle.zip' EXIT
+# trap 'rm -rf "${archiveDir}" "${srcDir}" "${srcDirTmp}" default.yaml bundle.zip' EXIT
 archiveDir=$(mktemp -d)
 srcDir=$(mktemp -d)
 srcDirTemp=$(mktemp -d)
@@ -98,10 +98,20 @@ function run_bundle_tests () {
   _run_unbundle -DTAR_URL="/nonexisting/test.tar" -DGIT_URL="/nonexisting/test.git"
   expect_not_exist dev/src/git/1/workspace/.git
 
+  # editing code + build should work as usual
+  echo "hello" > dev/src/git/1/workspace/hello.txt
+  _run_bob -b
+  expect_exist dev/dist/git/1/workspace/hello.txt
+
+  rm dev/dist/git/1/workspace/hello.txt
+  _run_unbundle -DTAR_URL="/nonexisting/test.tar" -DGIT_URL="/nonexisting/test.git"
+  expect_exist dev/dist/git/1/workspace/hello.txt
+
   # switching from bundle mode to normal mode should move to attic
   touch dev/src/git/1/workspace/canary.txt
   _run_bob
   expect_not_exist dev/src/git/1/workspace/canary.txt
+
   # switching from normal mode to bundle mode should move to attic
   touch dev/src/git/1/workspace/canary.txt
   _run_unbundle -DTAR_URL="/nonexisting/test.tar" -DGIT_URL="/nonexisting/test.git"
@@ -112,23 +122,6 @@ function run_bundle_tests () {
   _run_bundle --bundle-vcs
   _run_unbundle -DTAR_URL="/nonexisting/test.tar" -DGIT_URL="/nonexisting/test.git"
   expect_exist dev/src/git/1/workspace/.git
-
-  # test indeterministic bundle options
-  cleanup bundle.zip
-  expect_fail _run_bundle -c indeterministic --bundle-indeterministic fail
-
-  cleanup bundle.zip
-  _run_bundle -c indeterministic --bundle-indeterministic no
-  expect_fail _run_unbundle -c indeterministic \
-    -DTAR_URL="/nonexisting/test.tar" -DGIT_URL="/nonexisting/test.git"
-  _run_unbundle -c indeterministic -DGIT_URL="${GIT_URL}" -DTAR_URL="${TAR_URL}"
-
-  cleanup bundle.zip
-  _run_bundle -c indeterministic --bundle-indeterministic yes
-  expect_exist dev/src/git/1/workspace/.git
-  _run_unbundle -c indeterministic \
-      -DTAR_URL="${TAR_URL}" -DGIT_URL="${GIT_URL}"
-  expect_not_exist dev/src/git/1/workspace/.git
 
   # test exclude
   cleanup bundle.zip

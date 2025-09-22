@@ -22,6 +22,7 @@ import subprocess
 import stat
 import sys
 import time
+import tempfile
 
 from .state import DevelopDirOracle
 

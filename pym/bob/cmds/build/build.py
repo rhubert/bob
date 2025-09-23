@@ -354,7 +354,7 @@ def commonBuildDevelop(parser, argv, bobRoot, develop):
         builder = LocalBuilder(verbosity, args.force,
                                args.no_deps, True if args.build_mode == 'build-only' else False,
                                args.preserve_env, envWhiteList, bobRoot, args.clean,
-                               args.no_logfiles, args.unbundle is not None)
+                               args.no_logfiles, args.unbundle)
 
         builder.setExecutor(executor)
         builder.setArchiveHandler(archivers)

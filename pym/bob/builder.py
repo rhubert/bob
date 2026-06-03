@@ -10,6 +10,7 @@ from .errors import BobError, BuildError, MultiBobError
 from .input import RecipeSet
 from .invoker import Invoker, InvocationMode, JobserverConfig
 from .languages import StepSpec
+from .sbom import SBOMGenerator
 from .scm import getScm
 from .state import BobState
 from .stringparser import Env
@@ -475,6 +476,7 @@ cd {ROOT}
         self.__executor = None
         self.__attic = True
         self.__slimSandbox = False
+        self.__sbomProperties = None
 
     def setExecutor(self, executor):
         self.__executor = executor
@@ -579,6 +581,10 @@ cd {ROOT}
     def setShareMode(self, useShared, installShared):
         self.__useSharedPackages = useShared
         self.__installSharedPackages = installShared
+
+    def setSbom(self, props):
+        self.__sbomProperties = props
+        self.__sbomGenerator = SBOMGenerator(props)
 
     def setBuildDistBuildIds(self, buildIds):
         """Set build-ids of known dependencies.
@@ -762,6 +768,20 @@ cd {ROOT}
 
             audit.save(auditPath)
             return auditPath
+
+    async def _generateSbom(self, step, audit):
+        sbomPath = os.path.join(os.path.dirname(step.getWorkspacePath()), "bom.json.gz")
+        if os.path.lexists(sbomPath): removePath(sbomPath)
+
+        with stepAction(step, "SBOM", step.getWorkspacePath(), INFO) as a:
+            try:
+                self.__sbomGenerator.generate(step, sbomPath)
+            except BobError as e:
+                a.fail(e.slogan, WARNING)
+                if not a.visible:
+                    stepMessage(step, "SBOM", "{}: failed: {}"
+                                        .format(step.getWorkspacePath(), e.slogan),
+                                WARNING)
 
     def __linkDependencies(self, step):
         """Create symlinks to the dependency workspaces"""
@@ -1680,6 +1700,9 @@ cd {ROOT}
                 workspaceChanged = True
                 self.__statistic.packagesBuilt += 1
                 audit = await self._generateAudit(packageStep, depth, packageHash, packageBuildId)
+
+                if self.__sbomProperties is not None and self.__sbomProperties.enabled:
+                   await self._generateSbom(packageStep, audit)
 
         # Rehash directory if content was changed
         if workspaceChanged:

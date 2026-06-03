@@ -11,6 +11,7 @@ from ...intermediate import StepIR, PackageIR, RecipeIR, ToolIR, SandboxIR, \
     RecipeSetIR
 from ...invoker import Invoker, JobserverConfig
 from ...layers import updateLayers
+from ...sbom import SBOMGeneratorConfig
 from ...share import getShare
 from ...tty import setVerbosity, setTui, Warn
 from ...utils import copyTree, EventLoopWrapper, SandboxMode
@@ -225,6 +226,29 @@ def commonBuildDevelop(parser, argv, bobRoot, develop):
         help="Move scm to attic if inline switch is not possible (default).")
     group.add_argument('--no-attic', action='store_false', default=None, dest='attic',
         help="Do not move to attic, instead fail the build.")
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--sbom', action='store_true', default=True, dest='sbom',
+        help="Enable sbom generation")
+    group.add_argument('--no-sbom', action='store_false', dest='sbom',
+        help="Disable sbom generation")
+
+    parser.add_argument('--sbom-pretty', dest='sbom_pretty', action='store_true',
+                        help='Pretty-print SBOM json output')
+    parser.add_argument('--sbom-file-components', action='append', dest='sbom_file_components',
+                        help='Add file-components from <audit-file> component',
+                        default=[])
+    parser.add_argument('--sbom-deployed', action='store_true', default=False,
+                        help="Generate deployed sbom using `deployed` information of from audit")
+    parser.add_argument('--sbom-with-tools', dest='sbom_with_tools',
+                        action='store_true',
+                        default=False,
+                        help='Add tool dependencies packages to SBOM')
+    parser.add_argument('--sbom-with-sandbox', dest='sbom_with_sandbox',
+                        action='store_true',
+                        default=False,
+                        help='Add sandbox to SBOM')
+
     args = parser.parse_args(argv)
 
     defines = processDefines(args.defines)
@@ -328,6 +352,11 @@ def commonBuildDevelop(parser, argv, bobRoot, develop):
         builder.setShareMode(args.shared, args.install)
         builder.setAtticEnable(args.attic)
         builder.setSlimSandbox(sandboxMode.slimSandbox)
+
+        sbomProperties = SBOMGeneratorConfig(args.sbom, args.sbom_pretty,
+            args.sbom_with_tools, args.sbom_with_sandbox, args.sbom_file_components)
+        builder.setSbom(sbomProperties)
+
         if args.resume: builder.loadBuildState()
 
         backlog = []

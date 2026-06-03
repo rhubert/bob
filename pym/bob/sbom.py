@@ -6,9 +6,11 @@
 """SBOM (Software Bill of Materials) generation from audit trails."""
 
 from . import BOB_VERSION
-from .audit import Audit
+from .audit import Audit, Artifact
 from .errors import BobError, BuildError
 from .input import Step
+from .intermediate import StepIR
+from .scm import UrlScm
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -63,6 +65,9 @@ class SBOMGeneratorBase:
         # create a mapping of variantIds to artifactIds. From the (dependencies) of our step we
         # only get variantIds but we have to look them up in the audit using artifactIds.
         self._variant_to_artifactId = self._get_variant_to_artifact_id_map()
+
+        # for vid, aid in self._variant_to_artifactId.items():
+        #     print(f"vid: {vid.hex()} <-> aid: {aid.hex() if aid is not None else 'root'}")
 
     # FIXME: Move to audit class
     def _get_variant_to_artifact_id_map(self):
@@ -119,15 +124,17 @@ class SBOMGeneratorBase:
 
         deps = []
 
-        print("vid: " + vid.hex())
+        if not vid in self._variant_to_artifactId:
+            raise BuildError(f"Can not get audit information for {step.getPackage().getName()}: expected Variant ID not found in audit")
         artifact = self._audit.getArtifact(self._variant_to_artifactId[vid])
+
         audit_files = artifact.getFiles()
         next_deployed = deployed.copy()
         if 'sbom_deployed' in audit_files:
             try:
                 sbom_deployed = json.loads(audit_files.get('sbom_deployed'))
             except json.JSONDecodeError as e:
-                raise BuildError(f"Unable to load 'sbom_deployed' from audit of {step.getMetaData().get('package')}: {e}\n{audit_files.get('sbom_deployed')}")
+                raise BuildError(f"Unable to load 'sbom_deployed' from audit of {step.getPackage().getMetaData().get('package')}: {e}\n{audit_files.get('sbom_deployed')}")
             # sbom_deployed: list of dictionaries with "bob:variantId":"<variantId>, "files": [..]
             # only the via 'bob:variantId' referenced components are of interest for a deployed-sbom
             for e in sbom_deployed:
@@ -135,7 +142,7 @@ class SBOMGeneratorBase:
 
         data = None
         if step.isPackageStep():
-            data = {'info': self._get_artifact_info(artifact), 
+            data = {'info': self._get_artifact_info(artifact, step),
                     'deployed' : deployed}
             if rootBomRef is not None:
                 self._graph[rootBomRef].append(data['info'].bom_ref)
@@ -151,14 +158,13 @@ class SBOMGeneratorBase:
         yield data
 
 
-    def _get_artifact_info(self, artifact):
+    def _get_artifact_info(self, artifact : Artifact, step : StepIR) -> ArtifactInfo:
         """Extract common artifact information from audit and step information."""
         info = ArtifactInfo()
 
         meta_data = artifact.getMetaData()
         meta_env = artifact.getMetaEnv()
         build_info = artifact.getBuildInfo()
-        scms = artifact.getSCMs()
         name = SBOMGeneratorBase._shorten_package_name(meta_data.get('package'))
 
         cpe_type    = meta_env.get('PKG_CPE_TYPE','a')
@@ -181,7 +187,7 @@ class SBOMGeneratorBase:
         info.files = artifact.getFiles()
         info.name = name
         info.package = meta_data.get('package')
-        info.scms = scms
+        info.scms = step.getPackage().getCheckoutStep().getScmList()
 
         info.description = meta_env.get('PKG_DESCRIPTION')
         info.license = meta_env.get('PKG_LICENSE')
@@ -228,6 +234,18 @@ class CycloneDXGenerator(SBOMGeneratorBase):
 
         return sbom
 
+    def __add_external_references(self, data, info):
+       data['externalReferences'] = [ {
+               "type": "build-system",
+               "url": "https://bobbuildtool.dev/"
+           }]
+
+       for scm in info.scms:
+           data['externalReferences'].append({
+                "type": "vcs",
+                "url": scm.getProperties(False).get('url')
+            })
+
     def _generate_metadata(self, info: ArtifactInfo):
         """Generate CycloneDX metadata."""
         now = datetime.now(timezone.utc)
@@ -246,27 +264,15 @@ class CycloneDXGenerator(SBOMGeneratorBase):
                 "type": "application",
                 "bom-ref": info.bom_ref,
                 "name": info.name,
-                "externalReferences": [
-                    {
-                        "type": "build-system",
-                        "url": "https://bobbuildtool.dev/"
-                    }
-                ]
             } | SBOMGeneratorBase.append_if_set(info, 'version') \
               | SBOMGeneratorBase.append_if_set(info, 'description') \
               | SBOMGeneratorBase.append_if_set(info, 'cpe') \
               | CycloneDXGenerator._generate_licenses (info)
         }
 
-        for scm in info.scms:
-            if isinstance(scm, dict) and scm.get('url'):
-                metadata['component']['externalReferences'].append({
-                    "type": "vcs",
-                    "url": scm.get('url')
-                })
+        self.__add_external_references(metadata, info)
 
         return metadata
-
 
     def _generate_component(self, info: ArtifactInfo, deployed):
         """Generate CycloneDX component"""
@@ -314,12 +320,7 @@ class CycloneDXGenerator(SBOMGeneratorBase):
             "externalReferences": []
         } | SBOMGeneratorBase.append_if_set(info, 'version')
 
-        for scm in info.scms:
-            if isinstance(scm, dict) and scm.get('url'):
-                component['externalReferences'].append({
-                    "type": "vcs",
-                    "url": scm.get('url')
-                })
+        self.__add_external_references(component, info)
 
         components.append(component)
 

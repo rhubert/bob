@@ -1701,8 +1701,8 @@ cd {ROOT}
                 self.__statistic.packagesBuilt += 1
                 audit = await self._generateAudit(packageStep, depth, packageHash, packageBuildId)
 
-                if self.__sbomProperties is not None and self.__sbomProperties.enabled:
-                   await self._generateSbom(packageStep, audit)
+        if self.__sbomProperties is not None and self.__sbomProperties.enabled:
+            await self._generateSbom(packageStep, audit)
 
         # Rehash directory if content was changed
         if workspaceChanged:

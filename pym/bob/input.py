@@ -871,6 +871,7 @@ class CoreStep(CoreItem):
         self.providedDeps = []
         self.providedSandbox = None
         self.auditFileNames = auditFileNames
+        self.env['BOB_VARIANT_ID'] = asHexStr(self.variantId)
 
     def getPreRunCmds(self):
         return []

@@ -1664,6 +1664,7 @@ def doJenkins(argv, bobRoot):
 
     recipes = RecipeSet()
     recipes.defineHook('jenkinsNameFormatter', jenkinsNameFormatter)
+    recipes.defineHook('postPackageAction', None)
     recipes.setConfigFiles(args.configFile)
 
     if args.subcommand in availableJenkinsCmds:

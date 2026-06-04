@@ -261,6 +261,7 @@ def commonBuildDevelop(parser, argv, bobRoot, develop):
         recipes.defineHook('releaseNameFormatter', LocalBuilder.releaseNameFormatter)
         recipes.defineHook('developNameFormatter', LocalBuilder.developNameFormatter)
         recipes.defineHook('developNamePersister', None)
+        recipes.defineHook('postPackageAction', None)
         recipes.setConfigFiles(args.configFile)
         if args.build_mode != 'build-only':
             setVerbosity(args.verbose)
@@ -352,10 +353,7 @@ def commonBuildDevelop(parser, argv, bobRoot, develop):
         builder.setShareMode(args.shared, args.install)
         builder.setAtticEnable(args.attic)
         builder.setSlimSandbox(sandboxMode.slimSandbox)
-
-        sbomProperties = SBOMGeneratorConfig(args.sbom, args.sbom_pretty,
-            args.sbom_with_tools, args.sbom_with_sandbox, args.sbom_file_components)
-        builder.setSbom(sbomProperties)
+        builder.addPostPackageHook(recipes.getHook('postPackageAction'))
 
         if args.resume: builder.loadBuildState()
 

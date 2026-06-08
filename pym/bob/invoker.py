@@ -313,6 +313,9 @@ class Invoker:
         elif stderr is None:
             stderrRedir = self.__stderr
             stderrStreams = [self.__stderrStream]
+        elif stderr == 'if_failed':
+            stderrRedir = subprocess.PIPE
+            stderrStreams = [ io.BytesIO() ]
         else:
             stderrRedir = stderr
             stderrStreams = []
@@ -354,6 +357,9 @@ class Invoker:
         finally:
             transport.close()
         if check and ret != 0:
+            if stderr == 'if_failed' and ret != 0:
+                self.__stderrStream.write(stderrStreams[0].getvalue())
+
             raise CmdFailedError(cmd, ret)
 
         if stdout == True:
@@ -365,12 +371,15 @@ class Invoker:
         else:
             stdoutBuf = None
 
-        if stderr == True:
+        if stderr == True or stderr == 'if_failed':
             if universal_newlines:
                 stderrStreams[0].seek(0)
                 stderrBuf = io.TextIOWrapper(stderrStreams[0], errors=errors).read()
             else:
                 stderrBuf = stderrStreams[0].getvalue()
+
+            if stderr == 'if_failed':
+                self.__stdoutStream.write(stderrBuf.encode('utf-8'))
         else:
             stderrBuf = None
 

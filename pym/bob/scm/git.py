@@ -211,7 +211,7 @@ class GitScm(Scm):
 
         # make sure the git directory exists
         if not os.path.isdir(invoker.joinPath(self.__dir, ".git")):
-            await invoker.checkCommand(["git", "init", self.__dir])
+            await invoker.checkCommand(["git", "init",  self.__dir], stderr='if_failed')
             # setup local reference repo by writing the alternates file
             if self.__resolvedReferences:
                 with open(alternatesFile, "w") as a:
@@ -268,7 +268,7 @@ class GitScm(Scm):
         elif isinstance(self.__shallow, str):
             fetchCmd.append("--shallow-since={}".format(self.__shallow))
         elif await invoker.checkOutputCommand(["git", "rev-parse", "--is-shallow-repository"],
-                                              cwd=self.__dir) == "true":
+                                              cwd=self.__dir, stderr='if_failed') == "true":
             fetchCmd.append("--unshallow")
         fetchCmd.append("origin")
 
@@ -300,7 +300,7 @@ class GitScm(Scm):
         # Only do something if nothing is checked out yet or a forceful switch
         # is requested.
         rev_parse = await invoker.runCommand(["git", "rev-parse", "--verify",
-            "-q", "HEAD"], stdout=True, cwd=self.__dir)
+            "-q", "HEAD"], stdout=True, cwd=self.__dir, stderr='if_failed')
         headValid = rev_parse.returncode == 0
         if headValid:
             if not switch:
@@ -313,19 +313,21 @@ class GitScm(Scm):
                 # Convert tag to commit. Beware of annotated commits!
                 tag = await invoker.runCommand(["git", "rev-parse",
                                 "tags/"+self.__tag+"^0"],
-                                stdout=True, cwd=self.__dir)
+                                stdout=True, cwd=self.__dir, stderr='if_failed')
                 if tag.returncode == 0 and tag.stdout == rev_parse.stdout:
                     return
 
         # There is no point in doing the extra dance of fetching commits
         # explicitly like in __checkoutTag on shallow clones. We must make sure
         # that the commit is on the selected branch and need the full history!
-        await invoker.checkCommand(fetchCmd, retries=self.__retries, cwd=self.__dir)
+        await invoker.checkCommand(fetchCmd, retries=self.__retries, cwd=self.__dir,
+                                   stderr='if_failed')
 
         # Smoke test: see if tag/commit exists at all. Otherwise, the check
         # below will be missleading in its error message.
         commit = self.__commit if self.__commit else "tags/"+self.__tag
-        if await invoker.callCommand(["git", "cat-file", "-e", commit], cwd=self.__dir):
+        if await invoker.callCommand(["git", "cat-file", "-e", commit], cwd=self.__dir,
+                                     stderr='if_failed'):
             msg = "Commit" if self.__commit else "Tag"
             msg += f" {commit} could not be fetched from the server."
             if self.__shallow is not None:
@@ -342,7 +344,8 @@ class GitScm(Scm):
         # Verify that commit/tag is on requested branch
         if await invoker.callCommand(["git", "merge-base", "--is-ancestor",
                                      commit, "remotes/origin/"+self.__branch],
-                                     cwd=self.__dir):
+                                     cwd=self.__dir,
+                                     stderr='if_failed'):
             msg = f"Branch '{self.__branch}' does not contain '{commit}'"
             if self.__shallow is not None:
                 msg += f" Most probably, the 'shallow' setting was too agressive."
@@ -350,7 +353,7 @@ class GitScm(Scm):
 
         if headValid:
             branchExists = (await invoker.callCommand(["git", "show-ref", "-q",
-                "--verify", "refs/heads/" + self.__branch], cwd=self.__dir)) == 0
+                "--verify", "refs/heads/" + self.__branch], cwd=self.__dir, stderr='if_failed')) == 0
         else:
             branchExists = False
 
@@ -358,9 +361,9 @@ class GitScm(Scm):
             # New checkout or branch does not exist yet. That's easy...
             await invoker.checkCommand(["git", "checkout",
                 "--no-recurse-submodules", "-b", self.__branch, commit],
-                cwd=self.__dir)
+                cwd=self.__dir, stderr='if_failed')
             await invoker.checkCommand(["git", "branch",
-                "--set-upstream-to=origin/"+self.__branch], cwd=self.__dir)
+                "--set-upstream-to=origin/"+self.__branch], cwd=self.__dir, stderr='if_failed')
             # FIXME: will not be called again if interrupted!
             await self.__checkoutSubmodules(invoker)
         else:
@@ -368,7 +371,7 @@ class GitScm(Scm):
             # careful: the user might have committed to this branch, some other
             # branch might be checked out currently or both of that.
             await invoker.checkCommand(["git", "checkout", "--no-recurse-submodules",
-                self.__branch], cwd=self.__dir)
+                self.__branch], cwd=self.__dir, stderr='if_failed')
             preUpdate = await self.__updateSubmodulesPre(invoker)
 
             # check if any remote or any other than the local branch  holds the current
@@ -376,10 +379,12 @@ class GitScm(Scm):
             contains = await invoker.runCommand(["git", "branch", "-a",
                                                  "--format=%(refname:lstrip=2)",
                                                  "--contains", "HEAD"],
-                                                cwd=self.__dir, stdout=True)
+                                                cwd=self.__dir, stdout=True,
+                                                stderr='if_failed')
             currentBranch = await invoker.runCommand(["git", "rev-parse",
-                                                    "--abbrev-ref", "HEAD"],
-                                                    cwd=self.__dir, stdout=True)
+                                                     "--abbrev-ref", "HEAD"],
+                                                     cwd=self.__dir, stdout=True,
+                                                     stderr='if_failed')
             for b in contains.stdout.splitlines():
                 if b.rstrip() != currentBranch.stdout.rstrip():
                     break
@@ -389,15 +394,16 @@ class GitScm(Scm):
                 invoker.fail("Cannot switch: Current state woulde be lost.")
 
             await invoker.checkCommand(["git", *self._getGitConfigOptions(),
-                "reset", "--keep", commit], cwd=self.__dir)
+                "reset", "--keep", commit], cwd=self.__dir, stderr='if_failed')
             await self.__updateSubmodulesPost(invoker, preUpdate)
 
     async def __checkoutTag(self, invoker, fetchCmd, switch):
         # checkout only if HEAD is invalid
         head = await invoker.callCommand(["git", "rev-parse", "--verify", "-q", "HEAD"],
-            stdout=False, cwd=self.__dir)
+            stdout=False, cwd=self.__dir, stderr='if_failed')
         if head or switch:
-            await invoker.checkCommand(fetchCmd, retries=self.__retries, cwd=self.__dir)
+            await invoker.checkCommand(fetchCmd, retries=self.__retries, cwd=self.__dir,
+                                       stderr='if_failed')
             if self.__commit and (self.__shallow is not None):
                 # Shallow clones might not fetch the requested commit if the
                 # depth is too small. The problem is that we cannot blindly
@@ -406,16 +412,16 @@ class GitScm(Scm):
                 # the commit and only if this is not the case we fetch a 2nd
                 # time with the explicit commit.
                 haveCommit = await invoker.callCommand(["git", "cat-file", "-e",
-                    self.__commit], cwd=self.__dir) == 0
+                    self.__commit], cwd=self.__dir, stderr='if_failed') == 0
                 if not haveCommit:
                     ok = await invoker.callCommand(fetchCmd + [self.__commit],
-                        retries = self.__retries, cwd=self.__dir)
+                        retries = self.__retries, cwd=self.__dir, stderr='if_failed')
                     if ok != 0:
                         invoker.fail("Plain git-fetch in", self.__dir,
                             "did not download the requested commit and the explicit fetch failed!",
                             returncode=ok)
             await invoker.checkCommand(["git", "checkout", "-q", "--no-recurse-submodules",
-                self.__commit if self.__commit else "tags/"+self.__tag], cwd=self.__dir)
+                self.__commit if self.__commit else "tags/"+self.__tag], cwd=self.__dir, stderr='if_failed')
             # FIXME: will not be called again if interrupted!
             await self.__checkoutSubmodules(invoker)
 
@@ -430,23 +436,23 @@ class GitScm(Scm):
                 oldUpstreamCommit = oldBobHead.stdout.rstrip()
 
         head = await invoker.callCommand(["git", "rev-parse", "--verify", "-q", "HEAD"],
-            stdout=False, cwd=self.__dir)
+            stdout=False, cwd=self.__dir, stderr='if_failed')
         if head != 0 or switch or self.__rebase:
             await invoker.checkCommand(fetchCmd, retries=self.__retries, cwd=self.__dir)
             fetchHead = await invoker.checkOutputCommand(["git", "rev-parse", "FETCH_HEAD"],
-                                                         cwd=self.__dir)
+                                                         cwd=self.__dir, stderr='if_failed')
             if self.__rebase and oldUpstreamCommit:
                 await invoker.checkCommand(
                     ["git", "-c", "submodule.recurse=0", "rebase", "--onto",
                      fetchHead, oldUpstreamCommit],
-                    cwd=self.__dir)
+                    cwd=self.__dir, stderr='if_failed')
             else:
                 await invoker.checkCommand(["git", "checkout", "-q", "--no-recurse-submodules",
-                    fetchHead], cwd=self.__dir)
+                    fetchHead], cwd=self.__dir, stderr='if_failed')
 
             # Remember old fetched commit in case we need to rebase later.
             await invoker.checkCommand(["git", "config", "remote.origin.bob-head", fetchHead],
-                                       cwd=self.__dir)
+                                       cwd=self.__dir, stderr='if_failed')
             await self.__checkoutSubmodules(invoker)
 
     async def __checkoutBranch(self, invoker, fetchCmd, switch):
@@ -457,25 +463,26 @@ class GitScm(Scm):
             # non-local commits might be accidentally rebased or resurrected.
             remote = await invoker.runCommand(
                 ["git", "rev-parse", "--verify", "-q", "refs/remotes/origin/"+self.__branch],
-                stdout=True, cwd=self.__dir)
+                stdout=True, cwd=self.__dir,
+                stderr='if_failed')
             if remote.returncode == 0:
                 oldUpstreamCommit = remote.stdout.rstrip()
-        await invoker.checkCommand(fetchCmd, retries=self.__retries, cwd=self.__dir)
+        await invoker.checkCommand(fetchCmd, retries=self.__retries, cwd=self.__dir, stderr='if_failed')
         if await invoker.callCommand(["git", "rev-parse", "--verify", "-q", "HEAD"],
-                       stdout=False, cwd=self.__dir):
+                       stdout=False, cwd=self.__dir, stderr='if_failed'):
             # checkout only if HEAD is invalid
             await invoker.checkCommand(["git", "checkout", "--no-recurse-submodules", "-b", self.__branch,
-                "remotes/origin/"+self.__branch], cwd=self.__dir)
+                "remotes/origin/"+self.__branch], cwd=self.__dir, stderr='if_failed')
             await self.__checkoutSubmodules(invoker)
         elif switch:
             # We're switching the ref. There we will actively change the branch which
             # is normally forbidden.
             if await invoker.callCommand(["git", "show-ref", "-q", "--verify",
                                           "refs/heads/" + self.__branch],
-                                         cwd=self.__dir):
+                                         cwd=self.__dir, stderr='if_failed'):
                 # Branch does not exist. Create and checkout.
                 await invoker.checkCommand(["git", "checkout", "--no-recurse-submodules",
-                    "-b", self.__branch, "remotes/origin/"+self.__branch], cwd=self.__dir)
+                    "-b", self.__branch, "remotes/origin/"+self.__branch], cwd=self.__dir, stderr='if_failed')
                 await self.__checkoutSubmodules(invoker)
             else:
                 # Branch exists already. Checkout and fast forward...
@@ -484,7 +491,7 @@ class GitScm(Scm):
                 preUpdate = await self.__updateSubmodulesPre(invoker)
                 await self.__forwardBranch(invoker, oldUpstreamCommit)
                 await self.__updateSubmodulesPost(invoker, preUpdate)
-        elif (await invoker.checkOutputCommand(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=self.__dir)) == self.__branch:
+        elif (await invoker.checkOutputCommand(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=self.__dir, stderr='if_failed')) == self.__branch:
             # pull only if on original branch
             preUpdate = await self.__updateSubmodulesPre(invoker)
             await self.__forwardBranch(invoker, oldUpstreamCommit)
@@ -547,7 +554,7 @@ class GitScm(Scm):
         # state of all submodules and compare them later to the expected state.
         args = [ "git", "-C", base, "submodule", "-q", "foreach",
                  "printf '%s\\t%s\\n' \"$sm_path\" \"$(git rev-parse HEAD)\""]
-        checkedOut = await invoker.checkOutputCommand(args, cwd=self.__dir)
+        checkedOut = await invoker.checkOutputCommand(args, cwd=self.__dir, stderr='if_failed')
         checkedOut = {
             path : commit for path, commit
                 in ( line.split("\t") for line in checkedOut.split("\n") if line )
@@ -557,7 +564,7 @@ class GitScm(Scm):
         # List commits from git tree of all paths for checked out submodules.
         # This is what should be checked out.
         args = [ "git", "-C", base, "ls-tree", "-z", "HEAD"] + sorted(checkedOut.keys())
-        allPaths = await invoker.checkOutputCommand(args, cwd=self.__dir)
+        allPaths = await invoker.checkOutputCommand(args, cwd=self.__dir, stderr='if_failed')
         allPaths = {
             normPath(path) : attribs.split(' ')[2]
                 for attribs, path
@@ -603,7 +610,7 @@ class GitScm(Scm):
         # known submodules. Optionally restrict to user specified subset.
         args = [ "git", "-C", base, "config", "-f", ".gitmodules", "-z", "--get-regexp",
                  "path" ]
-        finishedProc = await invoker.runCommand(args, cwd=self.__dir, stdout=True)
+        finishedProc = await invoker.runCommand(args, cwd=self.__dir, stdout=True, stderr='if_failed')
         allPaths = finishedProc.stdout.rstrip() if finishedProc.returncode == 0 else ""
         allPaths = [ p.split("\n")[1] for p in allPaths.split("\0") if p ]
         if isinstance(self.__submodules, list):
@@ -692,7 +699,7 @@ class GitScm(Scm):
             elif oldTag:
                 # Convert tag to commit. Beware of annotated commits!
                 oldCommit = await invoker.checkOutputCommand(["git",
-                    "rev-parse", "tags/"+oldTag+"^0"], cwd=self.__dir)
+                    "rev-parse", "tags/"+oldTag+"^0"], cwd=self.__dir, stderr='if_failed')
             elif oldBranch:
                 # User moved from branch to detached HEAD
                 invoker.fail("Cannot switch: detached HEAD state")

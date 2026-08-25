@@ -862,6 +862,16 @@ class LocalArchiveUploader:
         return False
 
 
+def retryWebdavRequest(request, retries):
+    """Run a WebDav request, retrying transient transport errors."""
+    while True:
+        try:
+            return request()
+        except (WebdavError, OSError) as e:
+            if retries == 0: raise
+            retries -= 1
+
+
 class HttpArchive(BaseArchive):
     def __init__(self, spec):
         super().__init__(spec)
@@ -878,13 +888,7 @@ class HttpArchive(BaseArchive):
         return urllib.parse.urlunparse((url.scheme, getNetLoc(url), url.path, '', '', ''))
 
     def __retry(self, request):
-        retries = self._retries
-        while True:
-            try:
-                return request()
-            except (WebdavError, OSError) as e:
-                if retries == 0: raise
-                retries -= 1
+        return retryWebdavRequest(request, self._retries)
 
     def _canManage(self):
         return True
@@ -1212,6 +1216,89 @@ class AzureUploader:
             raise ArtifactError(str(e))
 
 
+class GiteaArchive(BaseArchive):
+    """Bob artifact backend for the Gitea 'generic' package registry.
+
+    Artifacts are stored using the generic package API:
+
+        {url}/api/packages/{owner}/generic/{package}/{version}/{filename}
+
+    with ``version`` and ``filename`` both derived from the build-id. All
+    artifact types belonging to the same key (``.tgz``, ``.buildid``,
+    ``.fprnt``) share a single package version.
+
+    The registry is a plain HTTP server as far as Bob is concerned. Only
+    HEAD, GET, PUT and DELETE are used, so the WebDav class does the actual
+    transport. As with the http backend the HTTP basic authentication
+    credentials are part of the URL. Gitea accepts a personal access token in
+    place of the password.
+    """
+
+    def __init__(self, spec):
+        super().__init__(spec)
+        self.__url = urllib.parse.urlparse(spec["url"])
+        self.__owner = spec["owner"]
+        self.__package = spec["package"]
+        self._webdav = WebDav(self.__url, spec.get("sslVerify", True))
+        self._retries = spec.get("retries", 1)
+
+    def __basePath(self):
+        return "/".join([self.__url.path.rstrip("/"), "api", "packages",
+            self.__owner, "generic", self.__package])
+
+    def getArchiveName(self):
+        name = super().getArchiveName()
+        if name:
+            return name
+        return urllib.parse.urlunparse((self.__url.scheme, getNetLoc(self.__url),
+            self.__basePath(), '', '', ''))
+
+    def _canManage(self):
+        # Managed operations (scan/clean) would require the Gitea package list
+        # API. Not implemented yet.
+        return False
+
+    def _makePath(self, buildId, suffix):
+        # One package version per artifact. The build-id/fingerprint/tarball
+        # files of an artifact all live in that single version.
+        packageResultId = buildIdToName(buildId)
+        return "/".join([self.__basePath(), packageResultId,
+            packageResultId + suffix])
+
+    def _remoteName(self, buildId, suffix):
+        return urllib.parse.urlunparse((self.__url.scheme, getNetLoc(self.__url),
+            self._makePath(buildId, suffix), '', '', ''))
+
+    def __retry(self, request):
+        return retryWebdavRequest(request, self._retries)
+
+    def _exists(self, path):
+        return self.__retry(lambda: self._webdav.exists(path))
+
+    def _openDownloadFile(self, buildId, suffix):
+        path = self._makePath(buildId, suffix)
+        return self.__retry(lambda: HttpDownloader(self, self._webdav.download(path)))
+
+    def _openUploadFile(self, buildId, suffix, overwrite):
+        path = self._makePath(buildId, suffix)
+        if overwrite:
+            # The generic registry refuses to overwrite an existing file but
+            # the meta data files (build-id, fingerprint) must be replaced.
+            # Delete a possibly existing file first. This is inherently racy:
+            # a concurrent upload may still squeeze in between the delete and
+            # the PUT below and let the latter fail with a conflict.
+            self.__retry(lambda: self._webdav.deletePath(path))
+        elif self._exists(path):
+            raise ArtifactExistsError()
+        return HttpUploader(self, path, overwrite)
+
+    def _putUploadFile(self, path, tmp, overwrite):
+        return self.__retry(lambda: self._webdav.upload(path, tmp, overwrite))
+
+    def getArchiveUri(self):
+        return getNetLoc(self.__url) + self.__url.path
+
+
 class MultiArchive:
     def __init__(self, archives):
         self.__archives = archives
@@ -1284,6 +1371,8 @@ def getSingleArchiver(recipes, archiveSpec):
         return CustomArchive(archiveSpec, recipes.envWhiteList())
     elif archiveBackend == "azure":
         return AzureArchive(archiveSpec)
+    elif archiveBackend == "gitea":
+        return GiteaArchive(archiveSpec)
     elif archiveBackend == "none":
         return DummyArchive()
     elif archiveBackend == "__jenkins":

@@ -217,11 +217,12 @@ class WebDav:
         return dir_infos
 
     def delete(self, filename):
-        base_path = self.__url.path
         # create a full path
-        filepath = '/'.join([base_path, filename.strip('/')])
+        self.deletePath('/'.join([self.__url.path, filename.strip('/')]))
+
+    def deletePath(self, path):
         headers = self._getHeaders()
-        req = urllib.request.Request (self._getURL(filepath),
+        req = urllib.request.Request (self._getURL(path),
                                       headers=headers, method="DELETE")
         status = reason = None
         try:

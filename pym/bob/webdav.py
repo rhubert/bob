@@ -138,6 +138,11 @@ class WebDav:
             if e.status == 412:
                 # precondition failed -> lost race with other upload
                 raise WebdavAlreadyExistsError()
+            if e.status == 409:
+                # Some servers (e.g. the Gitea package registry) do not honour
+                # "If-None-Match" but refuse to overwrite an existing file with
+                # a conflict instead.
+                raise WebdavAlreadyExistsError()
             raise WebdavError("PUT {} {}".format(e.status, e.reason))
         except (http.client.HTTPException, OSError) as e:
             raise WebdavError(str(e))

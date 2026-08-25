@@ -78,9 +78,11 @@ class WebDav:
                 userPass.encode("utf-8")).decode("ascii")
         return headers
 
-    def _getURL(self, path):
+    def _getURL(self, path, query=None):
+        if query is None:
+            query = self.__url.query
         return urlunsplit((self.__url.scheme, getNetLoc(self.__url), path,
-                           self.__url.query, self.__url.fragment))
+                           query, self.__url.fragment))
 
     def exists(self, path):
         req = urllib.request.Request (self._getURL(path),
@@ -98,12 +100,12 @@ class WebDav:
 
         return False
 
-    def download(self, path, offset=None, length=None):
+    def download(self, path, offset=None, length=None, query=None):
         headers = self._getHeaders()
         if offset is not None and length is not None:
             headers.update({'Range': 'bytes={}-{}'.format(offset, offset + length - 1)})
 
-        req = urllib.request.Request (self._getURL(path),
+        req = urllib.request.Request (self._getURL(path, query),
                                       headers=headers, method="GET")
         try:
             return urllib.request.urlopen (req, context=self.__context)

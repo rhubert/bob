@@ -56,7 +56,14 @@ class WebDav:
     def __init__(self, url, sslVerify=True):
         self.__url = url
         self.__connection = None
-        self.__context = None if sslVerify else sslNoVerifyContext()
+        self.__sslVerify = sslVerify
+
+    @property
+    def __context(self):
+        # Create the SSL context on demand. Holding it as an attribute would
+        # render the object unpicklable, but the archive backends are sent to
+        # the up-/download executor processes.
+        return None if self.__sslVerify else sslNoVerifyContext()
 
     def getPartialDownloader(self, path, length=512*1024):
         return self.PartialDownloader(self, path, length)

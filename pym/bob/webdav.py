@@ -123,7 +123,7 @@ class WebDav:
         length = str(buf.tell())
         buf.seek(0)
         headers = self._getHeaders()
-        headers.update({'Content-Length': length})
+        headers.update({'Content-Length': length, 'Content-Type': 'application/octet-stream'})
         if not overwrite:
             headers.update({'If-None-Match': '*'})
 

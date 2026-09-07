@@ -56,7 +56,14 @@ class WebDav:
     def __init__(self, url, sslVerify=True):
         self.__url = url
         self.__connection = None
-        self.__context = None if sslVerify else sslNoVerifyContext()
+        self.__sslVerify = sslVerify
+
+    @property
+    def __context(self):
+        # Create the SSL context on demand. Holding it as an attribute would
+        # render the object unpicklable, but the archive backends are sent to
+        # the up-/download executor processes.
+        return None if self.__sslVerify else sslNoVerifyContext()
 
     def getPartialDownloader(self, path, length=512*1024):
         return self.PartialDownloader(self, path, length)
@@ -71,9 +78,11 @@ class WebDav:
                 userPass.encode("utf-8")).decode("ascii")
         return headers
 
-    def _getURL(self, path):
+    def _getURL(self, path, query=None):
+        if query is None:
+            query = self.__url.query
         return urlunsplit((self.__url.scheme, getNetLoc(self.__url), path,
-                           self.__url.query, self.__url.fragment))
+                           query, self.__url.fragment))
 
     def exists(self, path):
         req = urllib.request.Request (self._getURL(path),
@@ -91,12 +100,12 @@ class WebDav:
 
         return False
 
-    def download(self, path, offset=None, length=None):
+    def download(self, path, offset=None, length=None, query=None):
         headers = self._getHeaders()
         if offset is not None and length is not None:
             headers.update({'Range': 'bytes={}-{}'.format(offset, offset + length - 1)})
 
-        req = urllib.request.Request (self._getURL(path),
+        req = urllib.request.Request (self._getURL(path, query),
                                       headers=headers, method="GET")
         try:
             return urllib.request.urlopen (req, context=self.__context)
@@ -116,7 +125,7 @@ class WebDav:
         length = str(buf.tell())
         buf.seek(0)
         headers = self._getHeaders()
-        headers.update({'Content-Length': length})
+        headers.update({'Content-Length': length, 'Content-Type': 'application/octet-stream'})
         if not overwrite:
             headers.update({'If-None-Match': '*'})
 
@@ -130,6 +139,11 @@ class WebDav:
             e.fp.read()
             if e.status == 412:
                 # precondition failed -> lost race with other upload
+                raise WebdavAlreadyExistsError()
+            if e.status == 409:
+                # Some servers (e.g. the Gitea package registry) do not honour
+                # "If-None-Match" but refuse to overwrite an existing file with
+                # a conflict instead.
                 raise WebdavAlreadyExistsError()
             raise WebdavError("PUT {} {}".format(e.status, e.reason))
         except (http.client.HTTPException, OSError) as e:
@@ -205,11 +219,12 @@ class WebDav:
         return dir_infos
 
     def delete(self, filename):
-        base_path = self.__url.path
         # create a full path
-        filepath = '/'.join([base_path, filename.strip('/')])
+        self.deletePath('/'.join([self.__url.path, filename.strip('/')]))
+
+    def deletePath(self, path):
         headers = self._getHeaders()
-        req = urllib.request.Request (self._getURL(filepath),
+        req = urllib.request.Request (self._getURL(path),
                                       headers=headers, method="DELETE")
         status = reason = None
         try:

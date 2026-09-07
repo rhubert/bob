@@ -2560,7 +2560,7 @@ The default is ``[download, upload]``.
 ``managed``
     This archive is managed, meaning the files can be iterated and deleted.
     This is required for the archive command to work. Only supported with the
-    ``file`` and ``http`` backends so far.
+    ``file``, ``http`` and ``gitea`` backends so far.
 ``cache``
     Use this archive to cache downloaded artifacts from other archives. If a
     binary artifact was successfully downloaded from another archive it will
@@ -2602,6 +2602,13 @@ file        Use a local directory as binary artifact repository. The directory
             directory. The optional ``fileMode`` and ``directoryMode`` keys
             take the desired access modes as numeric value to override the
             default umask derived modes.
+gitea       Uses a `Gitea generic package registry`_ as binary artifact
+            repository. The base server URL is given in ``url``, the registry
+            owner (user or organization) in ``owner`` and the generic package
+            name in ``package``. As with the ``http`` backend the credentials
+            are part of the URL. The optional ``sslVerify`` boolean key
+            controls whether to verify the SSL certificate and ``retries`` sets
+            the number of retries on transient errors.
 http        Uses a HTTP server as binary artifact repository. The server has to
             support the HEAD, PUT and GET methods. The base URL is given in the
             ``url`` key. The optional ``sslVerify`` boolean key controls
@@ -2679,6 +2686,29 @@ the anonymous access to the container can be used like this::
 
 The ``flags: [download]`` makes sure that Bob does not try to upload artifacts
 in case other backends are configured too.
+
+The ``gitea`` backend stores the artifacts in a Gitea generic package registry.
+The artifacts are put below ``{url}/api/packages/{owner}/generic/{package}/``
+with one package version per artifact::
+
+    archive:
+        -
+            backend: gitea
+            url: "https://user:passw%40rd@gitea.example.com"
+            owner: "bob-artifacts"
+            package: "myproject"
+            flags: [download, upload, managed]
+
+As for the ``http`` backend the credentials for the HTTP basic authentication
+are taken from the URL and have to be percent encoded. Gitea accepts a personal
+access token instead of the password. Uploading requires the ``write:package``
+scope, the ``managed`` flag additionally needs ``read:package``.
+
+.. warning::
+   The password will be part of the Jenkins job configuration. Anybody who can
+   read the jobs ``config.xml`` will be able to retrieve the password!
+
+.. _Gitea generic package registry: https://docs.gitea.com/usage/packages/generic
 
 .. _configuration-config-archive-prepend-append:
 

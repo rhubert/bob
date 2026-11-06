@@ -71,9 +71,15 @@ class HashOnce:
 
 CHECKOUT_STATE_VARIANT_ID = None    # Key in checkout directory state for step variant-id
 CHECKOUT_STATE_BUILD_ONLY = 1       # Key for checkout state of build-only builds
+CHECKOUT_STATE_SCM_DATA = 2        # Per-SCM checkout metadata
+CHECKOUT_STATE_SCM_FAILED = 3      # SCM invocations needing recovery
+CHECKOUT_STATE_SCM_RECOVERY = 4    # Opaque per-SCM recovery information
 
 # Keys in checkout getDirectoryState that are not directories
-CHECKOUT_NON_DIR_KEYS = {CHECKOUT_STATE_VARIANT_ID, CHECKOUT_STATE_BUILD_ONLY}
+CHECKOUT_NON_DIR_KEYS = {CHECKOUT_STATE_VARIANT_ID, CHECKOUT_STATE_BUILD_ONLY,
+                         CHECKOUT_STATE_SCM_DATA,
+                         CHECKOUT_STATE_SCM_FAILED,
+                         CHECKOUT_STATE_SCM_RECOVERY}
 
 def compareDirectoryState(left, right):
     """Compare two directory states while ignoring the SCM specs.
@@ -87,8 +93,9 @@ def compareDirectoryState(left, right):
     only relevant for build-only builds that have their dedicated functions
     below.
     """
-    left  = { d : v[0] for d, v in left.items()  if d != CHECKOUT_STATE_BUILD_ONLY }
-    right = { d : v[0] for d, v in right.items() if d != CHECKOUT_STATE_BUILD_ONLY }
+    ignored = CHECKOUT_NON_DIR_KEYS - {CHECKOUT_STATE_VARIANT_ID}
+    left  = { d : v[0] for d, v in left.items()  if d not in ignored }
+    right = { d : v[0] for d, v in right.items() if d not in ignored }
     return left == right
 
 def checkoutsFromState(state):
@@ -821,7 +828,7 @@ cd {ROOT}
                 i += 1
 
     async def _runShell(self, step, scriptName, logger, workspaceCreated, cleanWorkspace=None,
-                        mode=InvocationMode.CALL):
+                        mode=InvocationMode.CALL, scmCallback=None, scmStates=None):
         workspacePath = step.getWorkspacePath()
         if not os.path.isdir(workspacePath): os.makedirs(workspacePath)
         self.__linkDependencies(step)
@@ -873,7 +880,8 @@ cd {ROOT}
             executor=self.__executor)
         if step.jobServer() and self.__jobServer:
             invoker.setMakeJobserver(self.__jobServer.getSubMakeJobserverCfg(step.jobServer()))
-        ret = await invoker.executeStep(mode, workspaceCreated, cleanWorkspace)
+        ret = await invoker.executeStep(mode, workspaceCreated, cleanWorkspace,
+                                        scmCallback=scmCallback, scmStates=scmStates)
         if not self.__bufferedStdIO: ttyReinit() # work around MSYS2 messing up the console
         if ret == -int(signal.SIGINT):
             raise BuildError("User aborted while running {}".format(absRunFile),
@@ -1227,10 +1235,14 @@ cd {ROOT}
 
             if self.__cleanCheckout:
                 # check state of SCMs and invalidate if the directory is dirty
+                scmStates = oldCheckoutState.get(CHECKOUT_STATE_SCM_DATA, {})
                 for (scmDir, (scmDigest, scmSpec)) in checkoutsFromState(oldCheckoutState):
                     if scmDigest != checkoutState.get(scmDir, (None, None))[0]: continue
                     if not os.path.exists(os.path.join(prettySrcPath, scmDir)): continue
-                    if scmMap[scmDir].status(checkoutStep.getWorkspacePath()).dirty:
+                    scm = scmMap[scmDir]
+                    status = scm.statusWithCheckoutState(checkoutStep.getWorkspacePath(),
+                                                         scmStates.get(scmDir))
+                    if status.dirty:
                         # Invalidate scmDigest to forcibly move it away in the loop below.
                         # Do not use None here to distinguish it from a non-existent directory.
                         oldCheckoutState[scmDir] = (False, scmSpec)
@@ -1245,6 +1257,8 @@ cd {ROOT}
                 checkoutReason = "indeterministic"
             elif not compareDirectoryState(checkoutState, oldCheckoutState):
                 checkoutReason = "recipe changed"
+            elif oldCheckoutState.get(CHECKOUT_STATE_SCM_FAILED):
+                checkoutReason = "failed SCM checkout"
             elif (checkoutInputHashes != BobState().getInputHashes(prettySrcPath)):
                 checkoutReason = "dependency changed"
             elif (checkoutStep.getMainScript() or checkoutStep.getPostRunCmds()) \
@@ -1252,11 +1266,24 @@ cd {ROOT}
                 checkoutReason = "workspace changed"
 
             if checkoutReason:
+                # Only pass state from an unchanged SCM configuration. A
+                # switch has already changed its checkout, while a
+                # failed checkout cannot prove that it was applied.
+                failedDirs = oldCheckoutState.get(CHECKOUT_STATE_SCM_FAILED, [])
+                runtimeScmStates = {
+                    d: state for d, state in
+                    oldCheckoutState.get(CHECKOUT_STATE_SCM_DATA, {}).items()
+                    if d not in failedDirs and d in checkoutState and
+                    oldCheckoutState.get(d, (None,))[0] == checkoutState[d][0]
+                }
                 # Switch or move away old or changed source directories. In
                 # case of nested SCMs the loop relies on the property of
                 # checkoutsFromState() to return the directories in a top-down
                 # order.
                 atticPaths = AtticTracker()
+                failedScms = oldCheckoutState.get(CHECKOUT_STATE_SCM_FAILED, [])
+                recoveryStates = oldCheckoutState.get(CHECKOUT_STATE_SCM_RECOVERY, {})
+                pendingSwitches = set()
                 for (scmDir, (scmDigest, scmSpec)) in checkoutsFromState(oldCheckoutState):
                     scmPath = os.path.normpath(os.path.join(prettySrcPath, scmDir))
                     if atticPaths.affected(scmPath):
@@ -1268,20 +1295,55 @@ cd {ROOT}
                             BobState().setAtticDirectoryState(atticPath, scmSpec)
                         del oldCheckoutState[scmDir]
                         BobState().setDirectoryState(prettySrcPath, oldCheckoutState)
-                    elif scmDigest != checkoutState.get(scmDir, (None, None))[0]:
-                        canSwitch = (scmDir in scmMap) and scmDigest and \
-                                     scmSpec is not None and \
-                                     scmMap[scmDir].canSwitch(getScm(scmSpec)) and \
+                    elif (scmDigest != checkoutState.get(scmDir, (None, None))[0] or
+                          scmDir in failedScms):
+                        oldScm = getScm(scmSpec) if scmSpec is not None else None
+                        if oldScm is not None:
+                            oldScm.setCheckoutState(oldCheckoutState.get(
+                                CHECKOUT_STATE_SCM_DATA, {}).get(scmDir))
+                            oldScm.setCheckoutFailureState(
+                                recoveryStates.get(scmDir, {}) if scmDir in failedScms else None)
+                        retryFailedScm = (scmDir in failedScms and oldScm is not None and
+                                              scmDigest != checkoutState.get(scmDir, (None, None))[0] and
+                                              oldScm.canRetryCheckout(scmPath))
+                        canSwitch = (scmDir not in failedScms or retryFailedScm) and \
+                                     (scmDir in scmMap) and scmDigest and \
+                                     oldScm is not None and \
+                                     scmMap[scmDir].canSwitch(oldScm) and \
                                      os.path.exists(scmPath)
                         didSwitch = False
                         if canSwitch:
-                            didSwitch = await self.__runScmSwitch(checkoutStep,
-                                scmPath, scmMap[scmDir], scmSpec)
+                            def checkpointSwitch():
+                                pendingSwitches.add(scmDir)
+                                failed = set(oldCheckoutState.get(CHECKOUT_STATE_SCM_FAILED, []))
+                                failed.add(scmDir)
+                                oldCheckoutState[CHECKOUT_STATE_SCM_FAILED] = sorted(failed)
+                                oldCheckoutState.get(CHECKOUT_STATE_SCM_RECOVERY, {}).pop(scmDir, None)
+                                BobState().setDirectoryState(prettySrcPath, oldCheckoutState)
+                            oldScm.setCheckoutProgressCallback(checkpointSwitch)
+                            try:
+                                didSwitch = await self.__runScmSwitch(checkoutStep,
+                                    scmPath, scmMap[scmDir], oldScm)
+                            except BobError:
+                                if scmMap[scmDir].hasCheckoutState():
+                                    oldCheckoutState[CHECKOUT_STATE_SCM_FAILED] = sorted(
+                                        set(failedScms) | {scmDir})
+                                    oldCheckoutState.get(CHECKOUT_STATE_SCM_RECOVERY, {}).pop(scmDir, None)
+                                    BobState().setDirectoryState(prettySrcPath, oldCheckoutState)
+                                raise
 
                         if didSwitch:
                             oldCheckoutState[scmDir] = checkoutState[scmDir]
                             BobState().setDirectoryState(prettySrcPath, oldCheckoutState)
                             continue
+
+                        if canSwitch and scmMap[scmDir].hasCheckoutState():
+                            failedScms = sorted(set(failedScms) | {scmDir})
+                            oldCheckoutState[CHECKOUT_STATE_SCM_FAILED] = failedScms
+                            oldCheckoutState.get(CHECKOUT_STATE_SCM_RECOVERY, {}).pop(scmDir, None)
+                            BobState().setDirectoryState(prettySrcPath, oldCheckoutState)
+                            raise BuildError("SCM switch failed; checkout left in place. "
+                                "Run again to move it to the attic.")
 
                         if os.path.exists(scmPath):
                             if not self.__attic:
@@ -1318,6 +1380,8 @@ cd {ROOT}
                 # so that this step will run again if it fails. OTOH we must
                 # record the SCM directories as some checkouts might already
                 # succeeded before the step ultimately fails.
+                if pendingSwitches:
+                    checkoutState[CHECKOUT_STATE_SCM_FAILED] = sorted(pendingSwitches)
                 BobState().setDirectoryState(prettySrcPath,
                     { d:s for (d,s) in checkoutState.items() if d != CHECKOUT_STATE_VARIANT_ID })
 
@@ -1330,13 +1394,59 @@ cd {ROOT}
                     oldCheckoutHash = datetime.datetime.now()
                     BobState().setResultHash(prettySrcPath, oldCheckoutHash)
 
-                with stepExec(checkoutStep, "CHECKOUT",
-                              "{} ({}) {}".format(prettySrcPath, checkoutReason, overridesString)) as a:
-                    await self._runShell(checkoutStep, "checkout", a, created)
+                completedScms = set()
+                def recordScm(scm, completed):
+                    scmDir = scm.getDirectory()
+                    failed = set(checkoutState.get(CHECKOUT_STATE_SCM_FAILED, []))
+                    if completed:
+                        completedScms.add(scmDir)
+                        failed.discard(scmDir)
+                        checkoutState.get(CHECKOUT_STATE_SCM_RECOVERY, {}).pop(scmDir, None)
+                        scmState = scm.getCheckoutState(prettySrcPath)
+                        if scmState is not None:
+                            scmData = checkoutState.setdefault(CHECKOUT_STATE_SCM_DATA, {})
+                            scmData[scmDir] = scmState
+                    else:
+                        failed.add(scmDir)
+                        checkoutState.get(CHECKOUT_STATE_SCM_RECOVERY, {}).pop(scmDir, None)
+                    if failed:
+                        checkoutState[CHECKOUT_STATE_SCM_FAILED] = sorted(failed)
+                    else:
+                        checkoutState.pop(CHECKOUT_STATE_SCM_FAILED, None)
+                    state = {d: s for d, s in checkoutState.items()
+                             if d != CHECKOUT_STATE_VARIANT_ID}
+                    BobState().setDirectoryState(prettySrcPath, state)
+
+                try:
+                    with stepExec(checkoutStep, "CHECKOUT",
+                                  "{} ({}) {}".format(prettySrcPath, checkoutReason, overridesString)) as a:
+                        await self._runShell(checkoutStep, "checkout", a, created,
+                                             scmCallback=recordScm, scmStates=runtimeScmStates)
+                except BobError as e:
+                    # The SCM decides what recovery information is safe to
+                    # persist; other failures require a fresh checkout.
+                    failed = sorted(s.getDirectory() for s in scmList
+                                    if s.hasCheckoutState() and
+                                    s.getDirectory() not in completedScms)
+                    if failed:
+                        checkoutState[CHECKOUT_STATE_SCM_FAILED] = failed
+                        bases = {}
+                        for scm in scmList:
+                            if scm.getDirectory() in failed:
+                                failure = scm.getCheckoutFailureState(e)
+                                if failure is not None:
+                                    bases[scm.getDirectory()] = failure
+                        if bases:
+                            checkoutState[CHECKOUT_STATE_SCM_RECOVERY] = bases
+                        # A failed script has no successful recipe variant.
+                        checkoutState.pop(CHECKOUT_STATE_VARIANT_ID, None)
+                        BobState().setDirectoryState(prettySrcPath, checkoutState)
+                    raise
                 self.__statistic.checkouts += 1
                 checkoutExecuted = True
                 currentResultHash.invalidate() # force recalculation
-                # reflect new checkout state
+                # Reflect the completed checkout script. SCM state was
+                # already persisted as each invocation completed.
                 BobState().setDirectoryState(prettySrcPath, checkoutState)
                 BobState().setInputHashes(prettySrcPath, checkoutInputHashes)
                 BobState().setVariantId(prettySrcPath, await self.__getIncrementalVariantId(checkoutStep))

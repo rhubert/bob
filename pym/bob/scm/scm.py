@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 from ..errors import ParseError
-from ..utils import joinLines
+from ..utils import joinLines, hashDirectory
 from abc import ABCMeta, abstractmethod
 from enum import Enum
 from shlex import quote
@@ -12,6 +12,10 @@ import fnmatch
 import re
 
 SYNTHETIC_SCM_PROPS = frozenset(('__source', 'recipe', 'overridden'))
+
+def overlayFingerprint(path):
+    """Fingerprint policy shared by overlay state, status and audit records."""
+    return hashDirectory(path, ignoreDirs=['.git', '.svn', 'CVS']).hex()
 
 def _freezeValue(value):
     """Recursively turn a (possibly nested) value into a hashable one.
@@ -132,6 +136,7 @@ class ScmTaint(Enum):
     modified = 'M'
     new = 'N'
     overridden = 'O'
+    patched = 'P'
     switched = 'S'
     unknown = '?'
     unpushed_main = 'U'
@@ -221,6 +226,9 @@ class ScmStatus:
         else:
             self.__flags[flag] = description
 
+    def remove(self, flag):
+        self.__flags.pop(flag, None)
+
     def merge(self, other):
         for flag,description in other.__flags.items():
             self.add(flag, description)
@@ -233,6 +241,13 @@ class Scm(metaclass=ABCMeta):
             spec.get("dir", ".") + ", url:" + spec.get("url", "?")
         self.__recipe = spec["recipe"]
         self.__overrides = overrides
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        # Progress callbacks belong to the invoking process and may be local
+        # functions, which cannot be sent to process-pool workers.
+        state.pop('_Scm__checkoutProgressCallback', None)
+        return state
 
     def _diffSpec(self, oldScm):
         oldSpec = oldScm.getProperties(False)
@@ -380,6 +395,80 @@ class Scm(metaclass=ABCMeta):
 
     def postAttic(self, workspace):
         pass
+
+    def getProtectedPaths(self):
+        """Paths below this SCM directory that patch overlays may not modify."""
+        return []
+
+    def setCheckoutState(self, state):
+        """Supply persisted per-SCM state for a subsequent invocation."""
+        pass
+
+    def setCheckoutProgressCallback(self, callback):
+        """Install a callback for persisting an in-progress checkout."""
+        self.__checkoutProgressCallback = callback
+
+    def checkpointCheckoutProgress(self):
+        callback = getattr(self, '_Scm__checkoutProgressCallback', None)
+        if callback is not None:
+            callback()
+
+    def getCheckoutState(self, workspacePath):
+        """Return optional state to persist after this SCM completes."""
+        return None
+
+    def hasCheckoutState(self):
+        """Whether this SCM maintains additional checkout state."""
+        return False
+
+    def getCheckoutFailureState(self, error):
+        """Return recovery information for a failed invocation, if known."""
+        return None
+
+    def setCheckoutFailureState(self, state):
+        """Supply recovery information for a previously failed invocation."""
+        pass
+
+    def canRetryCheckout(self, workspacePath):
+        """Whether a failed checkout can safely be retried in place."""
+        return False
+
+    async def isCheckoutUnchanged(self, invoker):
+        """Return true only when invocation cannot change the checkout."""
+        return False
+
+    def setCheckoutUpdateHook(self, hook):
+        """Install a callback before a checkout mutation, if supported."""
+        return False
+
+    async def invokeWithCheckoutHooks(self, invoker, workspaceCreated,
+                                      beforeUpdate, afterUpdate):
+        """Coordinate managed work around this SCM's checkout mutations."""
+        if await self.isCheckoutUnchanged(invoker):
+            await self.invoke(invoker, workspaceCreated)
+            return
+
+        prepared = False
+        async def prepare():
+            nonlocal prepared
+            if not prepared:
+                await beforeUpdate()
+                prepared = True
+
+        hooked = self.setCheckoutUpdateHook(prepare)
+        if not hooked:
+            await prepare()
+        try:
+            await self.invoke(invoker, workspaceCreated)
+        finally:
+            if hooked:
+                self.setCheckoutUpdateHook(None)
+        if prepared:
+            await afterUpdate()
+
+    def statusWithCheckoutState(self, workspacePath, state=None):
+        """Inspect checkout state without changing the SCM status interface."""
+        return self.status(workspacePath)
 
 class ScmAudit(metaclass=ABCMeta):
     @classmethod

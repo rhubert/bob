@@ -547,7 +547,7 @@ class Invoker:
         return cmdArgs, env
 
     async def executeStep(self, mode, workspaceCreated, clean=False, keepSandbox=False,
-                           commands=None):
+                          commands=None, scmCallback=None, scmStates=None):
         # make permissions predictable
         os.umask(0o022)
 
@@ -610,10 +610,16 @@ class Invoker:
                 elif mode in (InvocationMode.CALL, InvocationMode.UPDATE):
                     for scm in self.__spec.preRunCmds:
                         scm = getScm(scm)
+                        if scmStates is not None:
+                            scm.setCheckoutState(scmStates.get(scm.getDirectory()))
+                        if scmCallback is not None:
+                            scm.setCheckoutProgressCallback(lambda: scmCallback(scm, False))
                         if mode == InvocationMode.UPDATE and not scm.isLocal():
                             continue # Skip non-local SCMs on update-only
                         try:
                             await scm.invoke(self, workspaceCreated)
+                            if scmCallback is not None:
+                                scmCallback(scm, True)
                         except CmdFailedError as e:
                             self.error(scm.getSource(), "failed")
                             self.error(e.what)
@@ -720,7 +726,7 @@ class Invoker:
         try:
             self.__openLog("SCM inline switch")
             try:
-                await scm.switch(self, getScm(oldSpec))
+                await scm.switch(self, getScm(oldSpec) if isinstance(oldSpec, dict) else oldSpec)
             except CmdFailedError as e:
                 self.error(scm.getSource(), "failed")
                 self.error(e.what)

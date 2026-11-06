@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from ...builder import LocalBuilder, checkoutsFromState
+from ...builder import LocalBuilder, checkoutsFromState, CHECKOUT_STATE_SCM_DATA
 from ...input import RecipeSet
 from ...scm import getScm, ScmTaint, ScmStatus
 from ...state import BobState
@@ -28,6 +28,7 @@ FLAG_TO_VERBOSITY = {
     ScmTaint.modified       : NORMAL,       # modified
     ScmTaint.new            : NORMAL,
     ScmTaint.overridden     : DEBUG,
+    ScmTaint.patched        : INFO,       # expected managed overlay
     ScmTaint.switched       : NORMAL,       # modified
     ScmTaint.unknown        : NORMAL,       # cannot tell, could be modified
     ScmTaint.unpushed_main  : NORMAL,       # modified
@@ -107,6 +108,7 @@ class Printer:
     def __showCheckoutStep(self, pp, checkoutStep):
         workspace = checkoutStep.getWorkspacePath()
         oldCheckoutState = BobState().getDirectoryState(workspace, True)
+        scmStates = oldCheckoutState.get(CHECKOUT_STATE_SCM_DATA, {})
         checkoutState = checkoutStep.getScmDirectories()
         scms = { scm.getDirectory() : scm for scm in checkoutStep.getScmList() }
         result = {}
@@ -119,7 +121,8 @@ class Printer:
 
             if scmDigest == checkoutState.get(scmDir, (None, None))[0]:
                 # The digest still matches -> use recipe values
-                status = scms[scmDir].status(workspace)
+                scm = scms[scmDir]
+                status = scm.statusWithCheckoutState(workspace, scmStates.get(scmDir))
             elif scmSpec is not None:
                 # New project that kept scm spec -> compare with that and mark
                 # as attic
@@ -293,4 +296,3 @@ def doStatus(argv, bobRoot):
                 printer.showAllDirs(args.attic)
     finally:
         BobState().setSynchronous()
-

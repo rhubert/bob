@@ -8,6 +8,7 @@ from ..stringparser import isTrue, IfExpression
 from ..tty import WarnOnce, stepAction, INFO, TRACE, WARNING
 from ..utils import check_output, joinLines, run, removeUserFromUrl
 from .scm import Scm, ScmAudit, ScmStatus, ScmTaint
+from .patch import PatchScm
 from shlex import quote
 from textwrap import dedent, indent
 from xml.etree import ElementTree
@@ -91,6 +92,7 @@ class GitScm(Scm):
     DEFAULTS = {
         **__DEFAULTS,
         schema.Optional('dir') : str,
+        schema.Optional('patches') : PatchScm.PATCHES_SHEMA,
     }
 
     SCHEMA = schema.Schema({
@@ -205,6 +207,25 @@ class GitScm(Scm):
         if self.__url.startswith("file:") or self.__url.startswith("/"):
             config += [ "-c", "protocol.file.allow=always" ]
         return config
+
+    def setCheckoutUpdateHook(self, hook):
+        self.__checkoutUpdateHook = hook
+        return True
+
+    async def __prepareCheckoutUpdate(self):
+        hook = getattr(self, '_GitScm__checkoutUpdateHook', None)
+        if hook is not None:
+            await hook()
+
+    async def isCheckoutUnchanged(self, invoker):
+        # A fixed commit with an existing HEAD is not checked out again by
+        # invoke(). Branch and ref checkouts can advance and must not use this
+        # shortcut.
+        if not self.__commit or not os.path.isdir(invoker.joinPath(self.__dir, '.git')):
+            return False
+        head = await invoker.runCommand(['git', 'rev-parse', '--verify', '-q', 'HEAD'],
+                                        stdout=True, stderr=False, cwd=self.__dir)
+        return head.returncode == 0 and head.stdout.strip() == self.__commit
 
     async def invoke(self, invoker, workspaceCreated, switch=False):
         alternatesFile = invoker.joinPath(self.__dir, ".git/objects/info/alternates")
@@ -435,6 +456,15 @@ class GitScm(Scm):
             await invoker.checkCommand(fetchCmd, retries=self.__retries, cwd=self.__dir)
             fetchHead = await invoker.checkOutputCommand(["git", "rev-parse", "FETCH_HEAD"],
                                                          cwd=self.__dir)
+            if not head and not switch:
+                current = await invoker.checkOutputCommand(['git', 'rev-parse', 'HEAD'],
+                                                           cwd=self.__dir)
+                unchanged = (oldUpstreamCommit == fetchHead if self.__rebase and oldUpstreamCommit
+                             else current == fetchHead)
+                if unchanged and getattr(self, '_GitScm__checkoutUpdateHook', None) is not None:
+                    return
+                if not unchanged:
+                    await self.__prepareCheckoutUpdate()
             if self.__rebase and oldUpstreamCommit:
                 await invoker.checkCommand(
                     ["git", "-c", "submodule.recurse=0", "rebase", "--onto",
@@ -486,6 +516,19 @@ class GitScm(Scm):
                 await self.__updateSubmodulesPost(invoker, preUpdate)
         elif (await invoker.checkOutputCommand(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=self.__dir)) == self.__branch:
             # pull only if on original branch
+            upstream = 'refs/remotes/origin/' + self.__branch
+            if self.__rebase and oldUpstreamCommit is not None:
+                newUpstream = await invoker.checkOutputCommand(['git', 'rev-parse', upstream],
+                                                               cwd=self.__dir)
+                changing = oldUpstreamCommit != newUpstream
+            else:
+                changing = bool(await invoker.callCommand(
+                    ['git', 'merge-base', '--is-ancestor', upstream, 'HEAD'],
+                    stdout=False, stderr=False, cwd=self.__dir))
+            if changing:
+                await self.__prepareCheckoutUpdate()
+            elif getattr(self, '_GitScm__checkoutUpdateHook', None) is not None:
+                return
             preUpdate = await self.__updateSubmodulesPre(invoker)
             await self.__forwardBranch(invoker, oldUpstreamCommit)
             await self.__updateSubmodulesPost(invoker, preUpdate)
@@ -1091,6 +1134,8 @@ class GitAudit(ScmAudit):
         'commit' : str,
         'description' : str,
         'dirty' : bool,
+        schema.Optional('patches') : [dict],
+        schema.Optional('patchFingerprint') : str,
         schema.Optional('submodules') : schema.Or(bool, [str]),
         schema.Optional('recurseSubmodules') : bool,
     })

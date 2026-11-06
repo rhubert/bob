@@ -319,8 +319,9 @@ class _BobState():
     #  6 -> 7: amended directory state for source steps, store attic directories
     #  7 -> 8: normalize attic directories
     #  8 -> 9: checkout directory state tracks import scm / update script state
+    #  9 -> 10: checkout directory state includes managed patch overlay data
     MIN_VERSION = 2
-    CUR_VERSION = 9
+    CUR_VERSION = 10
 
     VERSION_SINCE_ATTIC_TRACKED = 7
 
@@ -595,7 +596,7 @@ class _BobState():
         ret = copy.deepcopy(self.__dirStates.get(path, {} if isSourceDir else None))
         if isSourceDir:
             # convert from old format if necessary
-            ret = { k : v if isinstance(v, tuple) else (v, None)
+            ret = { k : v if isinstance(k, int) or isinstance(v, tuple) else (v, None)
                 for k, v in ret.items() }
         return ret
 
@@ -788,4 +789,3 @@ def finalize():
     if _BobState.instance is not None:
         _BobState.instance.finalize()
         _BobState.instance = None
-

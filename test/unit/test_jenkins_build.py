@@ -8,6 +8,47 @@ import sys
 
 from bob.utils import removePath
 
+class JenkinsPatchedScm(JenkinsTests, TestCase):
+    def testPatchedGitUsesBobCheckout(self):
+        with tempfile.TemporaryDirectory() as upstream:
+            subprocess.run(['git', 'init', upstream], check=True, stdout=subprocess.DEVNULL)
+            subprocess.run(['git', '-C', upstream, 'config', 'user.name', 'Test'], check=True)
+            subprocess.run(['git', '-C', upstream, 'config', 'user.email', 'test@example.invalid'],
+                           check=True)
+            with open(os.path.join(upstream, 'message'), 'w') as f:
+                f.write('old\n')
+            subprocess.run(['git', '-C', upstream, 'add', 'message'], check=True)
+            subprocess.run(['git', '-C', upstream, 'commit', '-m', 'base'], check=True,
+                           stdout=subprocess.DEVNULL)
+            commit = subprocess.check_output(['git', '-C', upstream, 'rev-parse', 'HEAD'],
+                                             text=True).strip()
+            self.writeRecipe('root', '''\
+                root: true
+                checkoutDeterministic: false
+                checkoutSCM:
+                  scm: git
+                  url: "{}"
+                  commit: "{}"
+                  patches:
+                    - file: fix.patch
+                buildScript: cp "$1/message" .
+                packageScript: cp "$1/message" .
+                '''.format(upstream.replace('\\', '/'), commit))
+            with open(os.path.join('recipes', 'fix.patch'), 'w') as f:
+                f.write('--- a/message\n+++ b/message\n@@ -1 +1 @@\n-old\n+patched\n')
+            self.executeBobJenkinsCmd('set-options test --incremental')
+            self.executeBobJenkinsCmd('push test')
+            self.assertNotIn(b'hudson.plugins.git.GitSCM',
+                             self.jenkinsMock.getJobConfig('root'))
+            self.jenkinsMock.run()
+            with self.getJobResult('root') as result:
+                with open(os.path.join(result, 'message')) as f:
+                    self.assertEqual(f.read(), 'patched\n')
+            self.jenkinsMock.run(['root'])
+            with self.getJobResult('root') as result:
+                with open(os.path.join(result, 'message')) as f:
+                    self.assertEqual(f.read(), 'patched\n')
+
 class JenkinsBuilds(JenkinsTests):
     OPTIONS = ""
 

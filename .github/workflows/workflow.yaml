@@ -88,6 +88,11 @@ jobs:
               run: |
                 choco install sliksvn --no-progress
 
+            - name: Install GNU Patch
+              run: |
+                C:\msys64\usr\bin\bash.exe -lc "pacman -S --needed --noconfirm patch"
+                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
             - name: Cache Jenkins integration test
               uses: actions/cache@v4
               with:
@@ -104,7 +109,18 @@ jobs:
                 Set-MpPreference -DisableRealtimeMonitoring $true
                 git config --global init.defaultBranch master # keep the old name
                 git config --global protocol.file.allow always # roll back CVE-2022-39253
-                $env:PATH = "$env:PATH;C:\msys64\usr\bin"
+                $patchDir = Join-Path $env:RUNNER_TEMP 'bob-gnu-patch'
+                New-Item -ItemType Directory -Force $patchDir | Out-Null
+                Copy-Item C:\msys64\usr\bin\patch.exe $patchDir
+                Copy-Item C:\msys64\usr\bin\msys-*.dll $patchDir
+                $env:PATH = "$patchDir;$env:PATH;C:\msys64\usr\bin"
+                $patch = (Get-Command patch.exe -CommandType Application | Select-Object -First 1).Source
+                Write-Host "Using patch: $patch"
+                $version = & $patch --version
+                if ($LASTEXITCODE -ne 0 -or $version[0] -notmatch '^GNU patch ') {
+                  throw "GNU Patch is required; found: $version"
+                }
+                Write-Host $version[0]
                 bash ./test/run-tests.sh -c xml -v
 
             - name: Upload coverage to Codecov

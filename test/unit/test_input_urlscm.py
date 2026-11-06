@@ -279,6 +279,16 @@ class TestDigestMatch(UrlScmTest, TestCase):
 
 class TestDownloads(UrlScmTest, TestCase):
 
+    def testDownloadWithCheckoutProgressCallback(self):
+        with HttpServerMock(self.dir) as srv:
+            scm = self.createUrlScm({
+                "url" : "http://localhost:{}/test.txt".format(srv.port),
+            })
+            scm.setCheckoutProgressCallback(lambda: None)
+            with TemporaryWorkspace() as workspace:
+                self.invokeScm(workspace, scm)
+                self.assertContent(os.path.join(workspace, "test.txt"))
+
     def testDownload(self):
         """Simple download via HTTP"""
         with HttpServerMock(self.dir) as srv:

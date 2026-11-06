@@ -110,6 +110,32 @@ class TestLock(EmptyDir, TestCase):
 class TestPersistence(EmptyDir, TestCase):
     """Verify persistence of state"""
 
+    def testPreviousVersionRemainsReadable(self):
+        self.writeState(9)
+        with open('.bob-state.pickle', 'rb') as f:
+            saved = pickle.load(f)
+        saved['dirStates']['source'] = {
+            'legacy': b'old-digest', 'current': (b'new-digest', {'scm': 'git'}),
+            2: {'current': {'fingerprint': 'abc'}},
+            3: ['current'], 4: {'current': 'legacy-base'},
+        }
+        with open('.bob-state.pickle', 'wb') as f:
+            pickle.dump(saved, f)
+        with BobStateWrap() as state:
+            checkout = state.getDirectoryState('source', True)
+            self.assertEqual(checkout['legacy'], (b'old-digest', None))
+            self.assertEqual(checkout['current'], (b'new-digest', {'scm': 'git'}))
+            self.assertEqual(checkout[2], {'current': {'fingerprint': 'abc'}})
+            self.assertEqual(checkout[3], ['current'])
+            self.assertEqual(checkout[4], {'current': 'legacy-base'})
+
+    def testPreviousBobRejectsPatchOverlayStateVersion(self):
+        self.assertEqual(BobState.CUR_VERSION, 10)
+        self.writeState(10)
+        with patch.object(BobState, 'CUR_VERSION', 9):
+            with self.assertRaisesRegex(BobError, 'too old for the workspace'):
+                BobState()
+
     def testPersistence(self):
         """Smoke test that tings are persisted"""
         with BobStateWrap() as s1:

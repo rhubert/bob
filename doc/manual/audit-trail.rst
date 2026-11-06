@@ -178,6 +178,26 @@ contain a list of objects under the ``scms`` key. Each object has at least a
 ``type`` key that identifies the kind of SCM and a ``dir`` key for the relative
 directory (or file) that was managed by the SCM in the workspace.
 
+For a patched SCM, ``patches`` is an ordered list of objects containing the
+recipe-relative ``path``, ``strip`` level, and patch content's ``digestSHA256``.
+``patchFingerprint`` identifies the patched checkout tree. The list order is
+the order in which patches were applied.
+
+For example, an SCM record may contain::
+
+    "patches": [
+        {
+            "path": "patches/fix.patch",
+            "strip": 1,
+            "digestSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+    ],
+    "patchFingerprint": "8768c7f2841400fb211b9d864134e6fcf0b6ff3c"
+
+The fingerprint reflects the checkout after applying the overlay; it is
+distinct from the individual patch-file digests. SCM records without a patch
+overlay do not contain these fields.
+
 See the following list for the additional information that each SCM adds to the
 record:
 
